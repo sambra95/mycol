@@ -1,0 +1,18 @@
+# Ignore a whole folder
+cellpose_training/
+models/
+
+# Ignore a specific file
+secret.txt
+
+# Ignore all .log files anywhere
+*.log
+*.tif
+*.yaml
+
+# Ignore compiled Python files
+__pycache__/
+*.pyc
+
+# Ignore environment files
+

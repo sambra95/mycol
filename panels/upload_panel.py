@@ -5,91 +5,143 @@ from helpers.mask_editing_functions import append_masks_to_rec
 
 
 def render_main():
+    ss = st.session_state
 
-    # ----- uploaded images -----#
-    image_uploader_key = f"u_images_np_{st.session_state['image_uploader_nonce']}"
-    st.subheader("Upload images here")
-    imgs = st.file_uploader(
-        "Images must be uploaded before masks",
-        type=["png", "jpg", "jpeg", "tif", "tiff"],
-        accept_multiple_files=True,
-        key=image_uploader_key,
-    )
-    if imgs:
-        for up in imgs:
-            ensure_image(up)
+    # ---- sensible defaults (avoid KeyErrors) ----
+    ss.setdefault("images", {})
+    ss.setdefault("current_key", None)
+    ss.setdefault("image_uploader_nonce", 0)
+    ss.setdefault("mask_uploader_nonce", 0)
+
+    # ---------- Layout: 2 columns ----------
+    col1, col2 = st.columns([2, 2])
+
+    # ---------- LEFT: uploads & summary ----------
+    with col1:
+        # ----- uploaded images -----#
+        st.subheader("Upload images here")
+        image_uploader_key = f"u_images_np_{ss['image_uploader_nonce']}"
+        imgs = st.file_uploader(
+            "Images must be uploaded before masks",
+            type=["png", "jpg", "jpeg", "tif", "tiff"],
+            accept_multiple_files=True,
+            key=image_uploader_key,
+        )
+        if imgs:
+            for up in imgs:
+                ensure_image(up)
+            # Optional: move focus to the last image added
+            ok = ordered_keys()
+            if ok:
+                set_current_by_index(len(ok) - 1)
+            # rotate key so uploaded files don't re-attach on rerun
+            ss["image_uploader_nonce"] += 1
+            st.rerun()
+
+        # ----- uploaded masks -----#
+        st.subheader("Upload masks here")
+        mask_uploader_key = f"u_masks_np_{ss['mask_uploader_nonce']}"
+        up_masks_list = st.file_uploader(
+            "Import masks",
+            type=["tif", "tiff"],
+            key=mask_uploader_key,
+            disabled=not bool(ss.images),
+            accept_multiple_files=True,
+        )
+
+        if up_masks_list and ss.images:
+            # map image stems
+            stem_to_key = {stem(rec["name"]): k for k, rec in ss.images.items()}
+
+            for up_masks in up_masks_list:
+                s = stem(up_masks.name)
+                target_stem = s[:-5] if s.endswith("_mask") else s
+                k = stem_to_key.get(target_stem)
+                if k is not None:  # skip if no corresponding image
+                    rec = ss.images[k]
+                    m = load_tif_masks_for_rec(up_masks, rec)
+                    append_masks_to_rec(rec, m)  # normalize/resize + append
+                    ss.current_key = k
+
+            # rotate key so uploaded files don't re-attach on rerun
+            ss["mask_uploader_nonce"] += 1
+            st.rerun()
+
+        # ---- Summary table: image–mask pairs ----
+        st.subheader("Uploaded image–mask pairs")
         ok = ordered_keys()
-        curk = st.session_state.current_key
-        set_current_by_index(curk)
+        if not ok:
+            st.info("No images uploaded yet.")
+        else:
+            h1, h2, h3, h4, h5 = st.columns([4, 2, 2, 2, 2])
+            h1.markdown("**Image**")
+            h2.markdown("**Mask present**")
+            h3.markdown("**Number of cells**")
+            h4.markdown("**Labelled Masks**")
+            h5.markdown("**Remove**")
 
-    # ----- uploaded masks -----#
-    st.subheader("Upload masks here")
+            for k in ok:
+                rec = ss.images[k]
+                masks = rec.get("masks")
+                n_labels = sum(l is not None for l in rec.get("labels", []))
+                has_mask = bool(masks is not None and getattr(masks, "size", 0) > 0)
+                n_cells = int(masks.shape[0]) if has_mask else 0
 
-    # unique key per run (optional, if you already maintain a nonce)
-    mask_uploader_key = f"u_masks_np_{st.session_state['mask_uploader_nonce']}"
+                c1, c2, c3, c4, c5 = st.columns([4, 2, 2, 2, 2])
+                c1.write(rec["name"])
+                c2.write("✅" if has_mask else "❌")
+                c3.write(str(n_cells))
+                c4.write(f"{n_labels}/{n_cells}")
+                if c5.button("Remove", key=f"remove_{k}"):
+                    del ss.images[k]
+                    ok2 = ordered_keys()
+                    ss.current_key = ok2[0] if ok2 else None
+                    st.rerun()
 
-    up_masks_list = st.file_uploader(
-        "Import masks",
-        type=["tif", "tiff"],
-        key=mask_uploader_key,
-        disabled=not st.session_state.images,
-        accept_multiple_files=True,
-    )
+    # ---------- RIGHT: model uploads (persist in session_state) ----------
+    with col2:
 
-    if up_masks_list and st.session_state.images:
+        # Initialize model state once
+        ss.setdefault("cellpose_model_bytes", None)
+        ss.setdefault("cellpose_model_name", None)
+        ss.setdefault("densenet_ckpt_bytes", None)
+        ss.setdefault("densenet_ckpt_name", None)
 
-        # map image stems
-        stem_to_key = {
-            stem(rec["name"]): k for k, rec in st.session_state.images.items()
-        }
+        # ---- Cellpose model (custom weights) ----
+        st.subheader("Upload Cellpose model here")
+        cellpose_file = st.file_uploader(
+            "Upload Cellpose model file",
+            # Cellpose custom models are commonly .npy; allow pt/pth just in case
+            type=["npy", "pt", "pth"],
+            key="upload_cellpose_model",
+        )
+        if cellpose_file is not None:
+            ss["cellpose_model_bytes"] = cellpose_file.read()
+            ss["cellpose_model_name"] = cellpose_file.name
+            st.success(f"Loaded Cellpose model: {cellpose_file.name}")
 
-        for up_masks in up_masks_list:
-            s = stem(up_masks.name)
-            target_stem = s[:-5] if s.endswith("_mask") else s
-            k = stem_to_key.get(target_stem)
-            if k is not None:  # skips mask if no corresponding image file found
-                rec = st.session_state.images[k]
-                m = load_tif_masks_for_rec(up_masks, rec)
-                append_masks_to_rec(rec, m)  # normalize/resize + append/replace
-                st.session_state.current_key = k
+        # ---- DenseNet-121 classifier ----
+        st.subheader("Upload Densenet121 classifier here")
+        densenet_file = st.file_uploader(
+            "Upload DenseNet-121 checkpoint",
+            type=["pt", "pth", "ckpt", "bin", "keras"],
+            key="upload_densenet_ckpt",
+        )
+        if densenet_file is not None:
+            ss["densenet_ckpt_bytes"] = densenet_file.read()
+            ss["densenet_ckpt_name"] = densenet_file.name
+            st.success(f"Loaded DenseNet-121 checkpoint: {densenet_file.name}")
 
-        # rotate key once so selected files don't re-attach on rerun
-        st.session_state["mask_uploader_nonce"] += 1
-        st.rerun()
+        # ---- Status panel ----
+        st.subheader("**Current model files**")
+        st.write("Cellpose model:", ss.get("cellpose_model_name") or "—")
+        st.write("DenseNet-121 checkpoint:", ss.get("densenet_ckpt_name") or "—")
 
-    # ---- Summary table: image–mask pairs ----
-
-    st.subheader("Uploaded image–mask pairs")
-
-    ok = ordered_keys()  # or list(st.session_state.images.keys()) if you don't sort
-    if not ok:
-        st.info("No images uploaded yet.")
-    else:
-        # header
-        h1, h2, h3, h4, h5 = st.columns([4, 2, 2, 2, 2])
-        h1.markdown("**Image**")
-        h2.markdown("**Mask present**")
-        h3.markdown("**Number of cells**")
-        h4.markdown("**Labelled Masks**")
-        h5.markdown("**Remove**")
-
-        # rows
-        for k in ok:
-
-            rec = st.session_state.images[k]
-            masks = rec.get("masks")
-            number_labels = len([x for x in rec.get("labels") if x != None])
-            has_mask = bool(masks is not None and getattr(masks, "size", 0) > 0)
-            n_cells = int(masks.shape[0]) if has_mask else 0
-
-            c1, c2, c3, c4, c5 = st.columns([4, 2, 2, 2, 2])
-            c1.write(rec["name"])
-            c2.write("✅" if has_mask else "❌")
-            c3.write(n_cells)
-            c4.write(f"{number_labels}/{n_cells}")
-            if c5.button("Remove", key=f"remove_{k}"):
-                # delete and fix current selection
-                del st.session_state.images[k]
-                ok2 = ordered_keys()
-                st.session_state.current_key = ok2[0] if ok2 else None
-                st.rerun()
+        # ---- Clear buttons ----
+        col_a, col_b = st.columns(2)
+        if col_a.button("Clear Cellpose model", use_container_width=True):
+            ss["cellpose_model_bytes"] = None
+            ss["cellpose_model_name"] = None
+        if col_b.button("Clear DenseNet-121", use_container_width=True):
+            ss["densenet_ckpt_bytes"] = None
+            ss["densenet_ckpt_name"] = None

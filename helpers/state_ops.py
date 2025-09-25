@@ -15,8 +15,11 @@ def ensure_global_state() -> None:
     ss.setdefault("name_to_key", {})  # {filename:str -> order_key:int}
     ss.setdefault("current_key", None)  # active order_key
     ss.setdefault("next_ord", 1)  # next order_key to assign
-    ss.setdefault("_img_files", [])  # raw UploadedFile refs (optional)
     ss.setdefault("analysis_plots", [])
+    ss.setdefault("cellpose_model_bytes", None)
+    ss.setdefault("cellpose_model_name", None)
+    ss.setdefault("densenet_ckpt_bytes", None)
+    ss.setdefault("densenet_ckpt_name", None)
 
     # UI defaults / nonces
     ss.setdefault("pred_canvas_nonce", 0)
@@ -26,19 +29,7 @@ def ensure_global_state() -> None:
     ss.setdefault("show_overlay", True)
     ss.setdefault("interaction_mode", "Draw box")
     ss.setdefault("side_panel", "Upload data")
-    st.session_state.setdefault(f"side_interaction_mode", "Draw box")
-    st.session_state.setdefault(f"side_show_overlay", True)
-
-    # Ensure each image record has the expected fields
-    # for rec in ss["images"].values():
-    #     rec.setdefault("name", "")
-    #     rec.setdefault("image", None)  # np.uint8 (H,W,3)
-    #     rec.setdefault("H", 0)
-    #     rec.setdefault("W", 0)
-    #     rec.setdefault("masks", [])  # (N,H,W) uint8 or None
-    #     rec.setdefault("boxes", [])  # list of (x0,y0,x1,y1)
-    #     rec.setdefault("last_click_xy", None)
-    #     rec.setdefault("canvas", {"closed_json": None, "processed_count": 0})
+    ss.setdefault(f"side_interaction_mode", "Draw box")
 
 
 def stem(p: str) -> str:

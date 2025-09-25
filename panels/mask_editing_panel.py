@@ -5,8 +5,7 @@ from PIL import Image
 from streamlit_drawable_canvas import st_canvas
 from streamlit_image_coordinates import streamlit_image_coordinates
 from helpers.mask_editing_functions import zip_all_masks
-
-
+from helpers.cellpose_functions import segment_rec_with_cellpose
 from helpers.state_ops import ordered_keys, set_current_by_index, current
 from helpers.mask_editing_functions import (
     _resize_mask_nearest,
@@ -46,13 +45,39 @@ def render_sidebar(*, key_ns: str = "side"):
         set_current_by_index(rec_idx + 1)
         st.rerun()
 
-    st.toggle(
-        "Show mask overlay",
-        value=st.session_state[f"{key_ns}_show_overlay"],
-        key=f"{key_ns}_show_overlay",
-    )
+    st.toggle("Show mask overlay", key="show_overlay")
 
     st.markdown("### Create and edit cell masks:")
+
+    def _segment_current_rec():
+        rec = current()
+        if rec is None:
+            st.warning("Upload an image first.")
+            return
+        with st.spinner("Running Cellpose…"):
+            segment_rec_with_cellpose(
+                rec
+            )  # overwrites rec['masks'], resets rec['labels']
+        # bump any canvas nonce you use so the UI refreshes
+        st.session_state["pred_canvas_nonce"] = (
+            st.session_state.get("pred_canvas_nonce", 0) + 1
+        )
+        st.rerun()
+
+    def _has_cellpose_model():
+        # require both bytes and a filename
+        return bool(st.session_state.get("cellpose_model_bytes")) and bool(
+            st.session_state.get("cellpose_model_name")
+        )
+
+    # — Place this button in your UI —
+    st.button(
+        "Segment with Cellpose",
+        key="btn_segment_cellpose",
+        on_click=_segment_current_rec,
+        disabled=not _has_cellpose_model(),
+        use_container_width=True,
+    )
 
     st.radio(
         "Select action to perform:",
@@ -154,18 +179,15 @@ def render_main(
     )
     disp_w, disp_h = int(rec["W"] * scale), int(rec["H"] * scale)
 
-    # visualize once
+    # render the image and mask overlay
     display_img = rec["image"]
-    if st.session_state["side_show_overlay"] and rec["masks"].shape[0] > 0:
+    if st.session_state["show_overlay"] and rec["masks"].shape[0] > 0:
         display_img = composite_over(rec["image"], rec["masks"], alpha=0.35)
     display_for_ui = np.array(
         Image.fromarray(display_img).resize((disp_w, disp_h), Image.BILINEAR)
     )
 
     # ensure nonces exist locally to avoid KeyErrors when called from this module
-    ss = st.session_state
-    ss.setdefault("pred_canvas_nonce", 0)
-    ss.setdefault("edit_canvas_nonce", 0)
 
     if st.session_state["side_interaction_mode"] == "Draw mask":
         bg = Image.fromarray(display_for_ui).convert("RGBA")
@@ -185,7 +207,7 @@ def render_main(
             drawing_mode="freedraw",  # keep as freehand drawing
             point_display_radius=3,
             initial_drawing=None,  # important: start empty every run
-            key=f"{key_ns}_canvas_edit_{ss['edit_canvas_nonce']}",
+            key=f"{key_ns}_canvas_edit_{st.session_state['edit_canvas_nonce']}",
         )
 
         if canvas_result.json_data:
@@ -218,7 +240,7 @@ def render_main(
 
             # 3) re-render (also clears the canvas because the key/nonce changes)
             if added_any:
-                ss["edit_canvas_nonce"] += 1
+                st.session_state["edit_canvas_nonce"] += 1
                 st.rerun()
 
     elif st.session_state["side_interaction_mode"] == "Draw box":
@@ -238,7 +260,7 @@ def render_main(
             drawing_mode="rect",
             point_display_radius=3,
             initial_drawing=initial_json,
-            key=f"{key_ns}_canvas_pred_{ss['pred_canvas_nonce']}",
+            key=f"{key_ns}_canvas_pred_{st.session_state['pred_canvas_nonce']}",
         )
 
         if canvas_result.json_data:

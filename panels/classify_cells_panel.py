@@ -10,6 +10,8 @@ from helpers.mask_editing_functions import (
     composite_over_by_class,
 )
 
+from helpers.densenet_functions import classify_rec_with_densenet
+
 from helpers.state_ops import ordered_keys, set_current_by_index, current
 
 from helpers.classifying_functions import classes_map_from_labels, make_classifier_zip
@@ -41,14 +43,34 @@ def render_sidebar(*, key_ns: str = "side"):
         set_current_by_index(cur_idx + 1)
         st.rerun()
 
-    st.toggle(
-        "Show mask overlay",
-        value=st.session_state[f"side_show_overlay"],
-        key=f"{key_ns}_show_overlay",
-    )
+    st.toggle("Show mask overlay", key="show_overlay")
 
     # --- Class selection & creation (sidebar) ---
     st.markdown("### Assign classes to cell masks:")
+
+    def _classify_current_rec():
+        rec = current()
+        if rec is None:
+            st.warning("Upload an image first.")
+            return
+        with st.spinner("Classifying cells with DenseNet-121…"):
+            classify_rec_with_densenet(rec)
+        st.success(f"Updated labels for {len(rec.get('labels', []))} masks")
+        st.rerun()
+
+    def _has_densenet_model():
+        # require both bytes and a filename
+        return bool(st.session_state.get("densenet_ckpt_bytes")) and bool(
+            st.session_state.get("densenet_ckpt_name")
+        )
+
+    st.button(
+        "Classify with Densenet121",
+        key="btn_classify_densenet",
+        on_click=_classify_current_rec,
+        use_container_width=True,
+        disabled=not _has_densenet_model,
+    )
 
     # keep a global list of labels
     labels = st.session_state.setdefault(
@@ -108,7 +130,7 @@ def render_main(*, key_ns: str = "edit"):
 
     display_img = rec["image"]
     if (
-        st.session_state.get("side_show_overlay", True)
+        st.session_state["show_overlay"]
         and isinstance(rec.get("masks"), np.ndarray)
         and rec["masks"].ndim == 3
         and rec["masks"].shape[0] > 0

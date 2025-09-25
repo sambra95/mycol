@@ -28,6 +28,7 @@ from panels import (
     mask_editing_panel,
     classify_cells_panel,
     cell_metrics_panel,
+    fine_tune_panel,
 )
 
 st.set_page_config(page_title="Mask Toggle", layout="wide")
@@ -49,7 +50,13 @@ with st.sidebar:
 
     panel = st.radio(
         "",
-        ["Upload data", "Create and Edit Masks", "Classify Cells", "Cell Metrics"],
+        [
+            "Upload data",
+            "Create and Edit Masks",
+            "Classify Cells",
+            "Fine Tune Models",
+            "Cell Metrics",
+        ],
         key="side_panel",
     )
 
@@ -64,6 +71,10 @@ with st.sidebar:
     elif panel == "Cell Metrics":
 
         cell_metrics_panel.render_sidebar()
+
+    elif panel == "Fine Tune Models":
+
+        fine_tune_panel.render_sidebar()
 
 
 # ============================================================
@@ -86,3 +97,7 @@ elif panel == "Classify Cells":
 elif panel == "Cell Metrics":
 
     cell_metrics_panel.render_main()
+
+elif panel == "Fine Tune Models":
+
+    fine_tune_panel.render_main()

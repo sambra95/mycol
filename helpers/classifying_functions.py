@@ -6,6 +6,7 @@ import io
 import pandas as pd
 from pathlib import Path
 from zipfile import ZipFile
+import cv2
 
 
 from helpers.state_ops import ordered_keys
@@ -54,63 +55,144 @@ def _to_square_patch(rgb: np.ndarray, patch_size: int = 256) -> np.ndarray:
     return canvas
 
 
+# def make_classifier_zip(patch_size: int = 64) -> bytes | None:
+#     rows = []
+#     buf = io.BytesIO()
+#     with ZipFile(buf, "w") as zf:
+#         for k in ordered_keys():
+#             rec = st.session_state.images[k]
+#             img, m = rec.get("image"), rec.get("masks")
+#             if (
+#                 img is None
+#                 or not isinstance(m, np.ndarray)
+#                 or m.ndim != 3
+#                 or m.shape[0] == 0
+#             ):
+#                 continue
+#             m = (m > 0).astype(np.uint8)  # (N,H,W)
+#             N, H, W = m.shape
+#             labs = list(rec.get("labels", []))
+#             if len(labs) < N:
+#                 labs.extend([None] * (N - len(labs)))
+
+#             inst = stack_to_instances_binary_first(m)  # (H,W) uint16
+#             ids = np.unique(inst)
+#             ids = ids[ids != 0]
+#             base = _stem(rec["name"])
+
+#             for iid in ids:
+#                 mm = inst == int(iid)
+#                 if not mm.any():
+#                     continue
+#                 ys, xs = np.where(mm)
+#                 y0, y1 = ys.min(), ys.max() + 1
+#                 x0, x1 = xs.min(), xs.max() + 1
+
+#                 # owner mask index by max overlap
+#                 owner = int(np.argmax(m[:, mm].sum(axis=1)))
+#                 cls = labs[owner]
+#                 if cls == "Remove label":
+#                     cls = None
+#                 if cls is None:  # only include labeled instances
+#                     continue
+
+#                 crop_rgb = img[y0:y1, x0:x1]
+#                 crop_mask = mm[y0:y1, x0:x1][..., None]
+#                 patch_rgb = _to_square_patch(
+#                     (crop_rgb * crop_mask).astype(np.uint8), patch_size
+#                 )
+
+#                 fname = f"{base}_mask{int(iid)}.png"
+#                 bio = io.BytesIO()
+#                 Image.fromarray(patch_rgb).save(bio, "PNG")
+#                 zf.writestr(f"images/{fname}", bio.getvalue())
+#                 rows.append({"image": fname, "mask number": int(iid), "class": cls})
+
+#         if not rows:
+#             return None
+#         df = pd.DataFrame(rows)
+#         zf.writestr("labels.csv", df.to_csv(index=False).encode("utf-8"))
+
+#     buf.seek(0)
+#     return buf.getvalue()
+
+import numpy as np, cv2
+
+
+def extract_masked_cell_patch(
+    image: np.ndarray, mask: np.ndarray, size: int | tuple[int, int] = 64
+):
+    im, m = np.asarray(image), np.asarray(mask, bool)
+    if im.shape[:2] != m.shape:
+        raise ValueError("image/mask size mismatch")
+    if not m.any():
+        return None
+    if im.ndim == 3 and im.shape[2] == 4:
+        im = cv2.cvtColor(im, cv2.COLOR_RGBA2RGB)
+
+    ys, xs = np.where(m)
+    y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+    crop, mc = im[y0:y1, x0:x1], m[y0:y1, x0:x1]
+    crop = (crop * mc[..., None] if crop.ndim == 3 else crop * mc).astype(im.dtype)
+
+    tw, th = (size, size) if isinstance(size, int) else map(int, size)
+    h, w = crop.shape[:2]
+    s = min(tw / w, th / h)
+    nw, nh = max(1, int(w * s)), max(1, int(h * s))
+    resized = cv2.resize(
+        crop, (nw, nh), interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_LINEAR
+    )
+
+    canvas = np.zeros(
+        (th, tw) if resized.ndim == 2 else (th, tw, resized.shape[2]), dtype=im.dtype
+    )  # black pad
+    yx = ((th - nh) // 2, (tw - nw) // 2)
+    canvas[yx[0] : yx[0] + nh, yx[1] : yx[1] + nw, ...] = resized
+    return canvas
+
+
+def _u8(a):
+    if a.dtype == np.uint8:
+        return a
+    a = a.astype(np.float32)
+    return np.clip(a * 255 if a.max() <= 1 else a, 0, 255).astype(np.uint8)
+
+
 def make_classifier_zip(patch_size: int = 256) -> bytes | None:
-    rows = []
-    buf = io.BytesIO()
+    rows, buf = [], io.BytesIO()
     with ZipFile(buf, "w") as zf:
         for k in ordered_keys():
             rec = st.session_state.images[k]
-            img, m = rec.get("image"), rec.get("masks")
+            img, M = rec.get("image"), rec.get("masks")
             if (
                 img is None
-                or not isinstance(m, np.ndarray)
-                or m.ndim != 3
-                or m.shape[0] == 0
+                or not isinstance(M, np.ndarray)
+                or M.ndim != 3
+                or M.shape[0] == 0
             ):
                 continue
-            m = (m > 0).astype(np.uint8)  # (N,H,W)
-            N, H, W = m.shape
-            labs = list(rec.get("labels", []))
-            if len(labs) < N:
-                labs.extend([None] * (N - len(labs)))
-
-            inst = stack_to_instances_binary_first(m)  # (H,W) uint16
-            ids = np.unique(inst)
-            ids = ids[ids != 0]
+            M = (M > 0).astype(np.uint8)
+            labs = list(rec.get("labels", [])) + [None] * max(
+                0, M.shape[0] - len(rec.get("labels", []))
+            )
+            inst = stack_to_instances_binary_first(M)
             base = _stem(rec["name"])
-
-            for iid in ids:
-                mm = inst == int(iid)
+            for iid in np.unique(inst)[1:]:
+                mm = (inst == int(iid)).astype(np.uint8)
                 if not mm.any():
                     continue
-                ys, xs = np.where(mm)
-                y0, y1 = ys.min(), ys.max() + 1
-                x0, x1 = xs.min(), xs.max() + 1
-
-                # owner mask index by max overlap
-                owner = int(np.argmax(m[:, mm].sum(axis=1)))
+                owner = int(np.argmax(M[:, mm.astype(bool)].sum(axis=1)))
                 cls = labs[owner]
-                if cls == "Remove label":
-                    cls = None
-                if cls is None:  # only include labeled instances
+                if cls in (None, "Remove label"):
                     continue
-
-                crop_rgb = img[y0:y1, x0:x1]
-                crop_mask = mm[y0:y1, x0:x1][..., None]
-                patch_rgb = _to_square_patch(
-                    (crop_rgb * crop_mask).astype(np.uint8), patch_size
-                )
-
-                fname = f"{base}_mask{int(iid)}.png"
+                patch = extract_masked_cell_patch(img, mm, size=patch_size)
+                if patch is None:
+                    continue
+                name = f"{base}_mask{int(iid)}.png"
                 bio = io.BytesIO()
-                Image.fromarray(patch_rgb).save(bio, "PNG")
-                zf.writestr(f"images/{fname}", bio.getvalue())
-                rows.append({"image": fname, "mask number": int(iid), "class": cls})
-
-        if not rows:
-            return None
-        df = pd.DataFrame(rows)
-        zf.writestr("labels.csv", df.to_csv(index=False).encode("utf-8"))
-
-    buf.seek(0)
-    return buf.getvalue()
+                Image.fromarray(_u8(patch)).save(bio, "PNG")
+                zf.writestr(f"images/{name}", bio.getvalue())
+                rows.append({"image": name, "mask number": int(iid), "class": cls})
+        if rows:
+            zf.writestr("labels.csv", pd.DataFrame(rows).to_csv(index=False))
+    return buf.getvalue() if rows else None

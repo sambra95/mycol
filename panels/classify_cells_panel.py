@@ -5,16 +5,18 @@ from PIL import Image
 from streamlit_image_coordinates import streamlit_image_coordinates
 import pandas as pd
 
+# from helpers.densenet_functions import classify_rec_with_densenet_batched
 from helpers.mask_editing_functions import (
     get_class_palette,
     composite_over_by_class,
 )
 
-from helpers.densenet_functions import classify_rec_with_densenet
-
 from helpers.state_ops import ordered_keys, set_current_by_index, current
 
-from helpers.classifying_functions import classes_map_from_labels, make_classifier_zip
+from helpers.classifying_functions import (
+    classes_map_from_labels,
+    make_classifier_zip,
+)
 
 
 def render_sidebar(*, key_ns: str = "side"):
@@ -48,30 +50,6 @@ def render_sidebar(*, key_ns: str = "side"):
     # --- Class selection & creation (sidebar) ---
     st.markdown("### Assign classes to cell masks:")
 
-    def _classify_current_rec():
-        rec = current()
-        if rec is None:
-            st.warning("Upload an image first.")
-            return
-        with st.spinner("Classifying cells with DenseNet-121…"):
-            classify_rec_with_densenet(rec)
-        st.success(f"Updated labels for {len(rec.get('labels', []))} masks")
-        st.rerun()
-
-    def _has_densenet_model():
-        # require both bytes and a filename
-        return bool(st.session_state.get("densenet_ckpt_bytes")) and bool(
-            st.session_state.get("densenet_ckpt_name")
-        )
-
-    st.button(
-        "Classify with Densenet121",
-        key="btn_classify_densenet",
-        on_click=_classify_current_rec,
-        use_container_width=True,
-        disabled=not _has_densenet_model,
-    )
-
     # keep a global list of labels
     labels = st.session_state.setdefault(
         "all_classes",
@@ -102,7 +80,7 @@ def render_sidebar(*, key_ns: str = "side"):
 
     # One button: build dataset + prepare labeled ZIP
     # ---- in your UI (single button) ----
-    data = make_classifier_zip(patch_size=256)
+    data = make_classifier_zip(patch_size=64)
     st.download_button(
         "Download classifier dataset (zip)",
         data=data or b"",
@@ -116,6 +94,40 @@ def render_sidebar(*, key_ns: str = "side"):
             else "Assign at least one label to enable download."
         ),
     )
+
+    # from tensorflow.keras.models import load_model
+
+    # import os
+    # import tempfile
+
+    # @st.cache_resource
+    # def _load_densenet_from_bytes():
+    #     b = st.session_state["densenet_ckpt_bytes"]  # set via .read()
+    #     p = os.path.join(tempfile.gettempdir(), "densenet_uploaded.keras")
+    #     with open(p, "wb") as f:
+    #         f.write(b)
+    #     return load_model(p)
+
+    # def classify_rec_with_densenet(rec: dict, size: int = 224):
+    #     M, img = rec["masks"], rec["image"]
+    #     patches = []
+    #     for i in range(M.shape[0]):
+    #         p = extract_masked_cell_patch(img, M[i], size)
+    #         if p is None:
+    #             p = np.zeros((size, size), dtype=img.dtype)
+    #         if p.ndim == 2:
+    #             p = np.repeat(p[..., None], 3, axis=2)
+    #         patches.append(p)
+    #     X = np.stack(patches).astype("float32") / 255.0
+    #     y = _load_densenet_from_bytes().predict(X, verbose=0)
+    #     rec["labels"] = y.argmax(axis=1).astype(int).tolist()
+    #     return rec
+
+    # st.button(
+    #     "Classify with Densenet121",
+    #     on_click=lambda: (classify_rec_with_densenet(current()), st.rerun()),
+    #     use_container_width=True,
+    # )
 
 
 def render_main(*, key_ns: str = "edit"):

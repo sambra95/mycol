@@ -18,53 +18,44 @@ def render_main():
 
     # ---------- LEFT: uploads & summary ----------
     with col1:
-        # ----- uploaded images -----#
-        st.subheader("Upload images here")
-        image_uploader_key = f"u_images_np_{ss['image_uploader_nonce']}"
-        imgs = st.file_uploader(
-            "Images must be uploaded before masks",
+        # ---- single uploader: images & masks ----
+        st.subheader("Upload images & masks here")
+        up_key = f"u_all_np_{ss.get('uploader_nonce', 0)}"
+        files = st.file_uploader(
+            "Upload images (.png/.jpg/.tif) and masks with '_mask' suffix (.tif)",
             type=["png", "jpg", "jpeg", "tif", "tiff"],
             accept_multiple_files=True,
-            key=image_uploader_key,
+            key=up_key,
         )
-        if imgs:
-            for up in imgs:
-                ensure_image(up)
-            # Optional: move focus to the last image added
+
+        def _process_uploads(files):
+            if not files:
+                return
+            # images first
+            imgs = [f for f in files if not stem(f.name).endswith("_mask")]
+            for f in imgs:
+                ensure_image(f)
             ok = ordered_keys()
             if ok:
                 set_current_by_index(len(ok) - 1)
-            # rotate key so uploaded files don't re-attach on rerun
-            ss["image_uploader_nonce"] += 1
-            st.rerun()
 
-        # ----- uploaded masks -----#
-        st.subheader("Upload masks here")
-        mask_uploader_key = f"u_masks_np_{ss['mask_uploader_nonce']}"
-        up_masks_list = st.file_uploader(
-            "Import masks",
-            type=["tif", "tiff"],
-            key=mask_uploader_key,
-            disabled=not bool(ss.images),
-            accept_multiple_files=True,
-        )
-
-        if up_masks_list and ss.images:
-            # map image stems
-            stem_to_key = {stem(rec["name"]): k for k, rec in ss.images.items()}
-
-            for up_masks in up_masks_list:
-                s = stem(up_masks.name)
-                target_stem = s[:-5] if s.endswith("_mask") else s
-                k = stem_to_key.get(target_stem)
-                if k is not None:  # skip if no corresponding image
+            # then masks (require prior image; match by stem without '_mask')
+            masks = [f for f in files if stem(f.name).endswith("_mask")]
+            if masks and ss.images:
+                stem_to_key = {stem(rec["name"]): k for k, rec in ss.images.items()}
+                for f in masks:
+                    base = stem(f.name)[:-5]  # drop "_mask"
+                    k = stem_to_key.get(base)
+                    if k is None:
+                        continue
                     rec = ss.images[k]
-                    m = load_tif_masks_for_rec(up_masks, rec)
-                    append_masks_to_rec(rec, m)  # normalize/resize + append
+                    m = load_tif_masks_for_rec(f, rec)
+                    append_masks_to_rec(rec, m)
                     ss.current_key = k
 
-            # rotate key so uploaded files don't re-attach on rerun
-            ss["mask_uploader_nonce"] += 1
+        if files:
+            _process_uploads(files)
+            ss["uploader_nonce"] = ss.get("uploader_nonce", 0) + 1
             st.rerun()
 
         # ---- Summary table: image–mask pairs ----
@@ -79,14 +70,12 @@ def render_main():
             h3.markdown("**Number of cells**")
             h4.markdown("**Labelled Masks**")
             h5.markdown("**Remove**")
-
             for k in ok:
                 rec = ss.images[k]
                 masks = rec.get("masks")
                 n_labels = sum(l is not None for l in rec.get("labels", []))
                 has_mask = bool(masks is not None and getattr(masks, "size", 0) > 0)
                 n_cells = int(masks.shape[0]) if has_mask else 0
-
                 c1, c2, c3, c4, c5 = st.columns([4, 2, 2, 2, 2])
                 c1.write(rec["name"])
                 c2.write("✅" if has_mask else "❌")
@@ -135,7 +124,7 @@ def render_main():
         # ---- Status panel ----
         st.subheader("**Current model files**")
         st.write("Cellpose model:", ss.get("cellpose_model_name") or "—")
-        st.write("DenseNet-121 checkpoint:", ss.get("densenet_ckpt_name") or "—")
+        st.write("DenseNet-121 model:", ss.get("densenet_ckpt_name") or "—")
 
         # ---- Clear buttons ----
         col_a, col_b = st.columns(2)

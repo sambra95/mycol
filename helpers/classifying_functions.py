@@ -135,3 +135,14 @@ def make_classifier_zip(patch_size: int = 64) -> bytes | None:
         if rows:
             zf.writestr("labels.csv", pd.DataFrame(rows).to_csv(index=False))
     return buf.getvalue() if rows else None
+
+
+def _add_label_from_input(labels, new_label_ss):
+    new_label = new_label_ss.strip()
+    if not new_label:
+        return
+    # assumes `labels` is in scope; consider storing it in st.session_state if needed
+    if new_label not in labels:
+        labels.append(new_label)
+    st.session_state["side_current_class"] = new_label
+    st.session_state["side_new_label"] = ""

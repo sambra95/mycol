@@ -20,6 +20,7 @@ def ensure_global_state() -> None:
     ss.setdefault("cellpose_model_name", None)
     ss.setdefault("densenet_ckpt_bytes", None)
     ss.setdefault("densenet_ckpt_name", None)
+    ss.setdefault("side_new_label", "")
 
     # UI defaults / nonces
     ss.setdefault("pred_canvas_nonce", 0)

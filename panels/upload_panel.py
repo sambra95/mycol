@@ -54,11 +54,7 @@ def render_main():
             ss["uploader_nonce"] = ss.get("uploader_nonce", 0) + 1
             st.rerun()
 
-        # Initialize model state once
-        ss.setdefault("cellpose_model_bytes", None)
-        ss.setdefault("cellpose_model_name", None)
-        ss.setdefault("densenet_ckpt_bytes", None)
-        ss.setdefault("densenet_ckpt_name", None)
+        st.divider()
 
         # ---- Cellpose model (custom weights) ----
         st.subheader("Upload Cellpose model here")
@@ -72,6 +68,8 @@ def render_main():
             ss["cellpose_model_bytes"] = cellpose_file.read()
             ss["cellpose_model_name"] = cellpose_file.name
             st.success(f"Loaded Cellpose model: {cellpose_file.name}")
+
+        st.divider()
 
         # ---- DenseNet-121 classifier ----
         st.subheader("Upload Densenet121 classifier here")
@@ -114,6 +112,8 @@ def render_main():
             ss["densenet_ckpt_bytes"] = None
             ss["densenet_ckpt_name"] = None
 
+        st.divider()
+
     # ---------- RIGHT: model uploads (persist in session_state) ----------
     with col2:
 
@@ -121,6 +121,8 @@ def render_main():
         st.subheader("**Current model files**")
         st.write("Cellpose model:", ss.get("cellpose_model_name") or "—")
         st.write("DenseNet-121 model:", ss.get("densenet_ckpt_name") or "—")
+
+        st.divider()
 
         # ---- Summary table: image–mask pairs ----
         st.subheader("Uploaded image–mask pairs")

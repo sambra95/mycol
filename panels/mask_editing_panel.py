@@ -5,7 +5,7 @@ from PIL import Image
 from streamlit_drawable_canvas import st_canvas
 from streamlit_image_coordinates import streamlit_image_coordinates
 from helpers.mask_editing_functions import zip_all_masks
-from helpers.cellpose_functions import segment_rec_with_cellpose
+from helpers.cellpose_functions import _segment_current_rec, _has_cellpose_model
 from helpers.state_ops import ordered_keys, set_current_by_index, current
 from helpers.mask_editing_functions import (
     _resize_mask_nearest,
@@ -15,8 +15,10 @@ from helpers.mask_editing_functions import (
     boxes_to_fabric_rects,
     draw_boxes_overlay,
     polygon_to_mask,
-    composite_over,
+    composite_over_by_class,
+    get_class_palette,
 )
+from helpers.classifying_functions import classes_map_from_labels
 
 
 def render_sidebar(*, key_ns: str = "side"):
@@ -45,44 +47,30 @@ def render_sidebar(*, key_ns: str = "side"):
         set_current_by_index(rec_idx + 1)
         st.rerun()
 
-    st.toggle("Show mask overlay", key="show_overlay")
+    st.toggle("Show mask overlay", key="show_overlay", value=True)
+
+    st.divider()
 
     st.markdown("### Create and edit cell masks:")
 
-    def _segment_current_rec():
-        rec = current()
-        if rec is None:
-            st.warning("Upload an image first.")
-            return
-        with st.spinner("Running Cellpose…"):
-            segment_rec_with_cellpose(
-                rec
-            )  # overwrites rec['masks'], resets rec['labels']
-        # bump any canvas nonce you use so the UI refreshes
-        st.session_state["pred_canvas_nonce"] = (
-            st.session_state.get("pred_canvas_nonce", 0) + 1
-        )
-        st.rerun()
+    st.radio(
+        "Select action to perform:",
+        ["Draw box", "Remove box", "Draw mask", "Remove mask"],
+        key=f"{key_ns}_interaction_mode",
+        horizontal=True,
+    )
 
-    def _has_cellpose_model():
-        # require both bytes and a filename
-        return bool(st.session_state.get("cellpose_model_bytes")) and bool(
-            st.session_state.get("cellpose_model_name")
-        )
-
-    # — Place this button in your UI —
     st.button(
         "Segment with Cellpose",
         key="btn_segment_cellpose",
         on_click=_segment_current_rec,
         disabled=not _has_cellpose_model(),
         use_container_width=True,
-    )
-
-    st.radio(
-        "Select action to perform:",
-        ["Draw box", "Remove box", "Draw mask", "Remove mask"],
-        key=f"{key_ns}_interaction_mode",
+        help=(
+            "Warning: this action will reset current mask labels."
+            if _has_cellpose_model()
+            else "Upload model"
+        ),
     )
 
     # --- Box utilities
@@ -182,7 +170,12 @@ def render_main(
     # render the image and mask overlay
     display_img = rec["image"]
     if st.session_state["show_overlay"] and rec["masks"].shape[0] > 0:
-        display_img = composite_over(rec["image"], rec["masks"], alpha=0.35)
+        labels = st.session_state.setdefault("all_classes", ["positive", "negative"])
+        palette = get_class_palette(labels)
+        classes_map = classes_map_from_labels(rec["masks"], rec["labels"])
+        display_img = composite_over_by_class(
+            rec["image"], rec["masks"], classes_map, palette, alpha=0.35
+        )
     display_for_ui = np.array(
         Image.fromarray(display_img).resize((disp_w, disp_h), Image.BILINEAR)
     )

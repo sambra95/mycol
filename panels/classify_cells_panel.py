@@ -21,6 +21,7 @@ from helpers.classifying_functions import (
     classes_map_from_labels,
     make_classifier_zip,
     extract_masked_cell_patch,
+    _add_label_from_input,
 )
 
 
@@ -52,6 +53,8 @@ def render_sidebar(*, key_ns: str = "side"):
 
     st.toggle("Show mask overlay", key="show_overlay")
 
+    st.divider()
+
     # --- Class selection & creation (sidebar) ---
     st.markdown("### Assign classes to cell masks:")
 
@@ -65,15 +68,15 @@ def render_sidebar(*, key_ns: str = "side"):
     # current class to assign on click
     st.session_state.setdefault("side_current_class", labels[0])
 
-    new_label = st.text_input("Add new class", key="side_new_label")
-    if st.button("Add", use_container_width=True, key="side_add_label") and new_label:
-        if new_label not in labels:
-            labels.append(new_label)
-        st.session_state["side_current_class"] = new_label
-        st.rerun()
+    st.text_input(
+        "",
+        key="side_new_label",
+        placeholder="Type a new class here and press Enter",
+        on_change=_add_label_from_input(labels, st.session_state["side_new_label"]),
+    )
 
     st.selectbox(
-        "Current class",
+        "Select class to assign by clicking",
         options=labels,
         index=(
             labels.index(st.session_state["side_current_class"])
@@ -163,6 +166,7 @@ def render_sidebar(*, key_ns: str = "side"):
 
 
 def render_main(*, key_ns: str = "edit"):
+
     rec = current()
     if rec is None:
         st.warning("Upload an image in **Upload data** first.")

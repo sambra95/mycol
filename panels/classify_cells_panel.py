@@ -4,6 +4,10 @@ import streamlit as st
 from PIL import Image
 from streamlit_image_coordinates import streamlit_image_coordinates
 import pandas as pd
+from tensorflow.keras.applications.densenet import preprocess_input
+
+import os
+import tempfile
 
 # from helpers.densenet_functions import classify_rec_with_densenet_batched
 from helpers.mask_editing_functions import (
@@ -16,6 +20,7 @@ from helpers.state_ops import ordered_keys, set_current_by_index, current
 from helpers.classifying_functions import (
     classes_map_from_labels,
     make_classifier_zip,
+    extract_masked_cell_patch_for_model,
 )
 
 
@@ -95,39 +100,39 @@ def render_sidebar(*, key_ns: str = "side"):
         ),
     )
 
-    # from tensorflow.keras.models import load_model
+    # defined elsewhere:
+    model = st.session_state["densenet_model"]
 
-    # import os
-    # import tempfile
+    def classify_rec_with_densenet(rec: dict, size: int = 64, batch_size: int = 128):
+        M, img = rec["masks"], rec["image"]
 
-    # @st.cache_resource
-    # def _load_densenet_from_bytes():
-    #     b = st.session_state["densenet_ckpt_bytes"]  # set via .read()
-    #     p = os.path.join(tempfile.gettempdir(), "densenet_uploaded.keras")
-    #     with open(p, "wb") as f:
-    #         f.write(b)
-    #     return load_model(p)
+        patches = []
+        for i in range(M.shape[0]):
+            p = extract_masked_cell_patch_for_model(img, M[i], size=size)
+            if p is not None:
+                patches.append(p)
 
-    # def classify_rec_with_densenet(rec: dict, size: int = 224):
-    #     M, img = rec["masks"], rec["image"]
-    #     patches = []
-    #     for i in range(M.shape[0]):
-    #         p = extract_masked_cell_patch(img, M[i], size)
-    #         if p is None:
-    #             p = np.zeros((size, size), dtype=img.dtype)
-    #         if p.ndim == 2:
-    #             p = np.repeat(p[..., None], 3, axis=2)
-    #         patches.append(p)
-    #     X = np.stack(patches).astype("float32") / 255.0
-    #     y = _load_densenet_from_bytes().predict(X, verbose=0)
-    #     rec["labels"] = y.argmax(axis=1).astype(int).tolist()
-    #     return rec
+        if not patches:
+            rec["labels"] = []
+            return rec
 
-    # st.button(
-    #     "Classify with Densenet121",
-    #     on_click=lambda: (classify_rec_with_densenet(current()), st.rerun()),
-    #     use_container_width=True,
-    # )
+        # Clean, contiguous batch (N, 64, 64, 3), float32
+        X = np.ascontiguousarray(np.stack(patches, axis=0, dtype=np.float32))
+
+        # Predict in small batches to reduce memory pressure on GPU/Metal
+        ys = []
+        for i in range(0, len(X), batch_size):
+            ys.append(model.predict(X[i : i + batch_size], verbose=0))
+        y = np.concatenate(ys, axis=0)
+
+        rec["labels"] = y.argmax(axis=1).astype(int).tolist()
+        return rec
+
+    st.button(
+        "Classify with Densenet121",
+        on_click=lambda: (classify_rec_with_densenet(current(), size=64), st.rerun()),
+        use_container_width=True,
+    )
 
 
 def render_main(*, key_ns: str = "edit"):

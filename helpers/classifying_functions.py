@@ -119,6 +119,51 @@ def _to_square_patch(rgb: np.ndarray, patch_size: int = 256) -> np.ndarray:
 import numpy as np, cv2
 
 
+def extract_masked_cell_patch_for_model(
+    image: np.ndarray, mask: np.ndarray, size: int | tuple[int, int] = 64
+):
+    im, m = np.asarray(image), np.asarray(mask, bool)
+    if im.shape[:2] != m.shape:
+        raise ValueError("image/mask size mismatch")
+    if not m.any():
+        return None
+
+    # Normalize channels from input
+    if im.ndim == 2:  # grayscale -> 3-channel
+        im = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
+    elif im.ndim == 3 and im.shape[2] == 4:  # RGBA -> RGB/BGR
+        im = cv2.cvtColor(im, cv2.COLOR_BGRA2BGR)  # keep in OpenCV BGR space
+
+    # tight crop around mask
+    ys, xs = np.where(m)
+    y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+    crop, mc = im[y0:y1, x0:x1], m[y0:y1, x0:x1]
+
+    # apply mask (black background)
+    crop = (crop * mc[..., None]).astype(im.dtype)
+
+    # letterbox resize to target size
+    tw, th = (size, size) if isinstance(size, int) else map(int, size)
+    h, w = crop.shape[:2]
+    s = min(tw / w, th / h)
+    nw, nh = max(1, int(w * s)), max(1, int(h * s))
+    resized = cv2.resize(
+        crop, (nw, nh), interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_LINEAR
+    )
+
+    canvas = np.zeros((th, tw, 3), dtype=resized.dtype)
+    yx = ((th - nh) // 2, (tw - nw) // 2)
+    canvas[yx[0] : yx[0] + nh, yx[1] : yx[1] + nw, :] = resized
+
+    # Convert BGR->RGB to match notebook (PIL) path
+    canvas = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+
+    # float32 + DenseNet preprocess (ImageNet)
+    canvas = canvas.astype(np.float32)
+    canvas = preprocess_input(canvas)  # shape (H, W, 3), float32
+    return canvas  # ready for model
+
+
 def extract_masked_cell_patch(
     image: np.ndarray, mask: np.ndarray, size: int | tuple[int, int] = 64
 ):

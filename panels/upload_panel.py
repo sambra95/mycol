@@ -18,7 +18,7 @@ def render_main():
         st.subheader("Upload images & masks here")
         up_key = f"u_all_np_{ss.get('uploader_nonce', 0)}"
         files = st.file_uploader(
-            "Upload images (.png/.jpg/.tif) and masks with '_mask' suffix (.tif)",
+            "Upload images (.png/.jpg/.tif) and masks with '_masks' suffix (.tif)",
             type=["png", "jpg", "jpeg", "tif", "tiff"],
             accept_multiple_files=True,
             key=up_key,
@@ -28,7 +28,7 @@ def render_main():
             if not files:
                 return
             # images first
-            imgs = [f for f in files if not stem(f.name).endswith("_mask")]
+            imgs = [f for f in files if not stem(f.name).endswith("_masks")]
             for f in imgs:
                 ensure_image(f)
             ok = ordered_keys()
@@ -36,7 +36,7 @@ def render_main():
                 set_current_by_index(len(ok) - 1)
 
             # then masks (require prior image; match by stem without '_mask')
-            masks = [f for f in files if stem(f.name).endswith("_mask")]
+            masks = [f for f in files if stem(f.name).endswith("_masks")]
             if masks and ss.images:
                 stem_to_key = {stem(rec["name"]): k for k, rec in ss.images.items()}
                 for f in masks:

@@ -148,20 +148,6 @@ def segment_rec_with_cellpose(
     rec["labels"] = [None] * int(nm.shape[0])  # reset/realign
 
 
-def _segment_current_rec():
-    rec = current()
-    if rec is None:
-        st.warning("Upload an image first.")
-        return
-    with st.spinner("Running Cellpose…"):
-        segment_rec_with_cellpose(rec)  # overwrites rec['masks'], resets rec['labels']
-    # bump any canvas nonce you use so the UI refreshes
-    st.session_state["pred_canvas_nonce"] = (
-        st.session_state.get("pred_canvas_nonce", 0) + 1
-    )
-    st.rerun()
-
-
 def _has_cellpose_model():
     # require both bytes and a filename
     return bool(st.session_state.get("cellpose_model_bytes")) and bool(

@@ -5,7 +5,10 @@ from PIL import Image
 from streamlit_drawable_canvas import st_canvas
 from streamlit_image_coordinates import streamlit_image_coordinates
 from helpers.mask_editing_functions import zip_all_masks
-from helpers.cellpose_functions import _segment_current_rec, _has_cellpose_model
+from helpers.cellpose_functions import (
+    _has_cellpose_model,
+    segment_rec_with_cellpose,
+)
 from helpers.state_ops import ordered_keys, set_current_by_index, current
 from helpers.mask_editing_functions import (
     _resize_mask_nearest,
@@ -60,10 +63,10 @@ def render_sidebar(*, key_ns: str = "side"):
         horizontal=True,
     )
 
-    st.button(
-        "Segment with Cellpose",
+    # segment current image
+    if st.button(
+        "Segment current image with Cellpose",
         key="btn_segment_cellpose",
-        on_click=_segment_current_rec,
         disabled=not _has_cellpose_model(),
         use_container_width=True,
         help=(
@@ -71,8 +74,27 @@ def render_sidebar(*, key_ns: str = "side"):
             if _has_cellpose_model()
             else "Upload model"
         ),
-    )
+    ):
+        segment_rec_with_cellpose(current())
 
+    # batch segment all images
+    if st.button(
+        "Batch segment all images with Cellpose",
+        key="btn_batch_segment_cellpose",
+        disabled=not _has_cellpose_model(),
+        use_container_width=True,
+        help=(
+            "Warning: this action will reset current mask labels."
+            if _has_cellpose_model()
+            else "Upload model"
+        ),
+    ):
+        n = len(ordered_keys())
+        pb = st.progress(0.0, text="Starting…")
+        for i, k in enumerate(ordered_keys(), 1):
+            segment_rec_with_cellpose(st.session_state.images.get(k))
+            pb.progress(i / n, text=f"Segmented {i}/{n}")
+        pb.empty()
     # --- Box utilities
     row = st.container()
     c1, c2, c3 = row.columns([1, 1, 1])
@@ -92,7 +114,9 @@ def render_sidebar(*, key_ns: str = "side"):
             )
             st.rerun()
 
-    if c3.button("Predict masks", use_container_width=True, key=f"{key_ns}_predict"):
+    if c3.button(
+        "Predict masks in boxes", use_container_width=True, key=f"{key_ns}_predict"
+    ):
         new_masks = _run_sam2_on_boxes(rec)
         append_masks_to_rec(
             rec, new_masks

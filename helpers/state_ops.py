@@ -21,16 +21,19 @@ def ensure_global_state() -> None:
     ss.setdefault("densenet_ckpt_bytes", None)
     ss.setdefault("densenet_ckpt_name", None)
     ss.setdefault("side_new_label", "")
+    ss.setdefault("show_overlay", True)
+    ss.setdefault("interaction_mode", "Draw box")
+    ss.setdefault("side_interaction_mode", "Draw box")
+
+    # cellpose model training defaults
+    ss.setdefault("cyto_to_train", "Cyto1")
 
     # UI defaults / nonces
     ss.setdefault("pred_canvas_nonce", 0)
     ss.setdefault("edit_canvas_nonce", 0)
     ss.setdefault("mask_uploader_nonce", 0)
     ss.setdefault("image_uploader_nonce", 0)
-    ss.setdefault("show_overlay", True)
-    ss.setdefault("interaction_mode", "Draw box")
     ss.setdefault("side_panel", "Upload data")
-    ss.setdefault(f"side_interaction_mode", "Draw box")
 
 
 def stem(p: str) -> str:

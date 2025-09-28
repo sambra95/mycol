@@ -1,9 +1,16 @@
 import streamlit as st
-from helpers.state_ops import ensure_image, ordered_keys, stem, set_current_by_index
-from helpers.upload_download_functions import load_tif_masks_for_rec
-from helpers.mask_editing_functions import append_masks_to_rec
-import os, tempfile, hashlib
-import tensorflow as tf
+from helpers.state_ops import (
+    ordered_keys,
+    stem,
+    set_current_by_index,
+)
+from helpers.upload_download_functions import (
+    create_new_record_with_image,
+    load_npy_mask,
+    load_tif_mask,
+)
+import os, tempfile, hashlib, io
+import numpy as np
 
 
 def render_main():
@@ -16,10 +23,11 @@ def render_main():
     with col1:
         # ---- single uploader: images & masks ----
         st.subheader("Upload images & masks here")
-        up_key = f"u_all_np_{ss.get('uploader_nonce', 0)}"
+
+        up_key = f"u_all_np_{ss.get('uploader_nonce', 0)}"  # ensures clean on reload
         files = st.file_uploader(
             "Upload images (.png/.jpg/.tif) and masks with '_masks' suffix (.tif)",
-            type=["png", "jpg", "jpeg", "tif", "tiff"],
+            type=["tif", "tiff", "npy"],
             accept_multiple_files=True,
             key=up_key,
         )
@@ -27,27 +35,29 @@ def render_main():
         def _process_uploads(files):
             if not files:
                 return
-            # images first
+            # load the images first
             imgs = [f for f in files if not stem(f.name).endswith("_masks")]
             for f in imgs:
-                ensure_image(f)
+                create_new_record_with_image(f)
             ok = ordered_keys()
             if ok:
                 set_current_by_index(len(ok) - 1)
 
-            # then masks (require prior image; match by stem without '_mask')
+            # then loads the masks (require prior image; match by stem without '_mask')
             masks = [f for f in files if stem(f.name).endswith("_masks")]
             if masks and ss.images:
                 stem_to_key = {stem(rec["name"]): k for k, rec in ss.images.items()}
                 for f in masks:
-                    base = stem(f.name)[:-5]  # drop "_mask"
-                    k = stem_to_key.get(base)
-                    if k is None:
+                    base = stem(f.name)[:-6]  # drop "_mask"
+                    k = stem_to_key.get(base)  # get the ID key
+                    if k is None:  # skips if no mask
                         continue
-                    rec = ss.images[k]
-                    m = load_tif_masks_for_rec(f, rec)
-                    append_masks_to_rec(rec, m)
-                    ss.current_key = k
+                    rec = ss.images[k]  # set the record
+                    rec["labels"] = []  # reset the mask labels
+                    if f.name.endswith(".npy"):
+                        rec["masks"] = load_npy_mask(f, rec)
+                    else:
+                        rec["masks"] = load_tif_mask(f, rec)
 
         if files:
             _process_uploads(files)
@@ -82,7 +92,7 @@ def render_main():
             key="upload_densenet_ckpt",
         )
         if densenet_file is not None:
-            from tensorflow.keras.models import load_model
+            from tensorflowimport import load_model, Model
 
             data = densenet_file.read()
             ext = os.path.splitext(densenet_file.name)[1].lower() or ".keras"
@@ -94,9 +104,7 @@ def render_main():
 
             model = load_model(path, compile=False, safe_mode=False)
             if isinstance(model.outputs, (list, tuple)) and len(model.outputs) > 1:
-                model = tf.keras.Model(
-                    model.inputs, model.outputs[0]
-                )  # single-output wrapper
+                model = Model(model.inputs, model.outputs[0])  # single-output wrapper
 
             ss["densenet_model"] = model
             ss["densenet_model_path"] = path
@@ -125,7 +133,10 @@ def render_main():
         st.divider()
 
         # ---- Summary table: image–mask pairs ----
-        st.subheader("Uploaded image–mask pairs")
+
+        num_images = len(st.session_state["images"].keys())
+
+        st.subheader(f"Uploaded images and masks ({num_images})")
         ok = ordered_keys()
         if not ok:
             st.info("No images uploaded yet.")
@@ -137,12 +148,19 @@ def render_main():
             h4.markdown("**Labelled Masks**")
             h5.markdown("**Remove**")
             for k in ok:
-                rec = ss.images[k]
+                rec = ss.images[k]  # sets the row record
                 masks = rec.get("masks")
-                n_labels = sum(l is not None for l in rec.get("labels", []))
-                has_mask = bool(masks is not None and getattr(masks, "size", 0) > 0)
-                n_cells = int(masks.shape[0]) if has_mask else 0
+                n_labels = sum(
+                    l is not None for l in rec.get("labels", [])
+                )  # n_labels is just number of not None in list
+                has_mask = (
+                    isinstance(masks, np.ndarray) and masks.ndim == 2 and masks.any()
+                )  # check for a mask with the right format
+                n_cells = (
+                    int(len(np.unique(masks)) - 1) if has_mask else 0
+                )  # n_cells = number of non 0 integers
                 c1, c2, c3, c4, c5 = st.columns([4, 2, 2, 2, 2])
+                # write out the table
                 c1.write(rec["name"])
                 c2.write("✅" if has_mask else "❌")
                 c3.write(str(n_cells))

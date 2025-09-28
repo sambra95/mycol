@@ -3,142 +3,104 @@ from PIL import Image
 import io
 import numpy as np
 import tifffile as tiff
+import streamlit as st
+from zipfile import ZipFile
+from pathlib import Path
 
 
-def load_tif_masks_for_rec(upfile, rec):
-    """Return (N,H,W) uint8 {0,1} resized to rec['H'],rec['W']."""
+def load_npy_mask(file, rec):
+    """Read Cellpose *_seg.npy and return a (H,W) label matrix with 0 background, 1..N instances."""
+    file = file.read()
+    arr = np.load(io.BytesIO(file), allow_pickle=True).item()
+    # Cellpose stores masks in dict under 'masks'
+    mask = arr["masks"].astype(np.uint16)
     H, W = rec["H"], rec["W"]
-    a = (
-        tiff.imread(io.BytesIO(upfile.read()))
-        if hasattr(upfile, "read")
-        else tiff.imread(upfile)
-    )
-    a = np.asarray(a)
+    if mask.shape != (H, W):
+        # resize if needed
+        from PIL import Image
 
-    # normalize to (N,H,W) binary
-    if a.ndim == 2:
-        if a.dtype != bool and np.max(a) > 1:
-            ids = np.unique(a)
-            ids = ids[ids != 0]
-            m = (
-                np.stack([(a == i).astype(np.uint8) for i in ids], 0)
-                if ids.size
-                else np.zeros((0, H, W), np.uint8)
+        mask = np.array(
+            Image.fromarray(mask).resize((W, H), resample=Image.NEAREST),
+            dtype=np.uint16,
+        )
+    return mask
+
+
+def load_tif_mask(file, rec):
+    """Read a label TIFF and return a (H,W) label matrix with 0 background, 1..N instances."""
+    file = file.read()
+    mask = tiff.imread(io.BytesIO(file)).astype(np.uint16)
+
+    H, W = rec["H"], rec["W"]
+    if mask.shape != (H, W):
+        mask = np.array(
+            Image.fromarray(mask).resize((W, H), resample=Image.NEAREST),
+            dtype=np.uint16,
+        )
+    return mask
+
+
+def create_new_record_with_image(uploaded_file):
+    name = uploaded_file.name
+    m = st.session_state.name_to_key
+    imgs = st.session_state.images
+
+    # already have it → focus it
+    if name in m:
+        st.session_state.current_key = m[name]
+        return
+
+    # new record
+    img_np = np.array(Image.open(uploaded_file).convert("RGB"), dtype=np.uint16)
+    H, W = img_np.shape[:2]
+    k = st.session_state.next_ord
+    st.session_state.next_ord += 1
+
+    imgs[k] = {
+        "name": name,
+        "image": img_np,
+        "H": H,
+        "W": W,
+        "masks": np.zeros((H, W), dtype=np.uint16),
+        "labels": [],
+        "boxes": [],
+        "last_click_xy": None,
+        "canvas": {"closed_json": None, "processed_count": 0},
+    }
+    m[name] = k
+    st.session_state.current_key = k
+
+
+def zip_all_masks(images: dict, keys: list[int]) -> bytes:
+    buf = io.BytesIO()
+    with ZipFile(buf, "w") as zf:
+        for k in keys:
+            rec = images[k]
+            H, W = rec["H"], rec["W"]
+            inst = rec.get("masks")
+
+            # fallback to empty label image
+            if not isinstance(inst, np.ndarray) or inst.ndim != 2 or inst.size == 0:
+                inst = np.zeros((H, W), np.uint16)
+
+            # ensure correct size (nearest keeps integer IDs)
+            if inst.shape != (H, W):
+                inst = np.array(
+                    Image.fromarray(inst).resize((W, H), Image.NEAREST),
+                    dtype=inst.dtype,
+                )
+
+            # write the single 2D label image unchanged
+            b = io.BytesIO()
+            tiff.imwrite(
+                b,
+                inst,
+                dtype=np.uint16,
+                photometric="minisblack",
+                compression="zlib",
+                metadata={"axes": "YX"},  # hint it's a 2D image
             )
-        else:
-            m = (a > 0).astype(np.uint8)[None, ...]
-    elif a.ndim == 3:
-        if a.shape[-1] in (1, 3):  # (H,W,1/3)
-            a = a[..., 0] if a.shape[-1] == 1 else (a.sum(-1) > 0)
-            m = (a > 0).astype(np.uint8)[None, ...]
-        else:  # (N,H,W)
-            m = (a > 0).astype(np.uint8)
-    elif a.ndim == 4:  # (N,H,W,1/3)
-        a = a[..., 0] if a.shape[-1] == 1 else (a.sum(-1) > 0)
-        m = (a > 0).astype(np.uint8)
-    else:
-        m = np.zeros((0, H, W), np.uint8)
+            zf.writestr(f"{Path(rec['name']).stem}_masks.tif", b.getvalue())
 
-    if m.ndim == 2:
-        m = m[None, ...]
-    if m.shape[-2:] != (H, W):
-        m = np.stack([_resize_mask_nearest(mi, H, W) for mi in m], 0).astype(np.uint8)
-    return np.ascontiguousarray((m > 0).astype(np.uint8))
-
-
-def load_image(file) -> np.ndarray:
-    img = Image.open(file).convert("RGB")
-    return np.array(img, dtype=np.uint8)
-
-
-def _normalize_masks(m):
-    m = np.asarray(m)
-    if m.ndim == 2:
-        m = m[None, ...]
-    elif m.ndim == 4:
-        m = m[..., 0] if m.shape[-1] in (1, 3) else m[:, 0, ...]
-    return (m > 0).astype(np.uint8)
-
-
-def _as_uint8_binary(x: np.ndarray) -> np.ndarray:
-    x = np.asarray(x)
-    if x.dtype == bool:
-        return x.astype(np.uint8)
-    # Heuristic: treat any nonzero as 1 (covers 0/255 and arbitrary logits >0)
-    return (x > 0).astype(np.uint8)
-
-
-def _maybe_reorder_to_nhw(arr: np.ndarray) -> np.ndarray:
-    """
-    Accept (N,H,W), (H,W,N), (H,W,1), (N,H,W,1), (H,W) — return (N,H,W).
-    Raises if ambiguous but extremely unlikely with square-ish images.
-    """
-    a = np.asarray(arr)
-
-    # Squeeze trailing singleton channel
-    if a.ndim == 4 and a.shape[-1] == 1:
-        a = a[..., 0]
-
-    # 2D → single mask as stack of one
-    if a.ndim == 2:
-        return a[None, ...]  # (1,H,W)
-
-    # 3D cases
-    if a.ndim == 3:
-        # (H,W,1)
-        if a.shape[-1] == 1:
-            return a[..., 0][None, ...]
-        # Try as (N,H,W)
-        if a.shape[0] < 128 and a.shape[1] >= 8 and a.shape[2] >= 8:
-            return a
-        # Else assume (H,W,N)
-        return np.transpose(a, (2, 0, 1))
-
-    raise ValueError(f"Unsupported mask array shape {a.shape}")
-
-
-def _load_tiff(fp) -> np.ndarray:
-    arr = tiff.imread(fp)
-    # Instance map?
-    if arr.ndim == 2 and np.issubdtype(arr.dtype, np.integer):
-        return _instances_to_stack(arr)
-    # Otherwise assume a stack
-    arr = _maybe_reorder_to_nhw(arr)
-    return _as_uint8_binary(arr)
-
-
-def _load_npy(fp) -> np.ndarray:
-    arr = np.load(fp)  # returns ndarray
-    arr = _maybe_reorder_to_nhw(arr)
-    return _as_uint8_binary(arr)
-
-
-def _load_npz(fp) -> np.ndarray:
-    z = np.load(fp)
-    # Prefer common keys
-    for k in ("masks", "mask", "arr_0"):
-        if k in z:
-            arr = z[k]
-            break
-    else:
-        # fallback: first array in archive
-        first_key = list(z.files)[0]
-        arr = z[first_key]
-    arr = _maybe_reorder_to_nhw(arr)
-    return _as_uint8_binary(arr)
-
-
-def load_masks_any(uploaded_file) -> np.ndarray:
-    """
-    Read masks from .tif/.tiff (instance label or stack), .npy, or .npz and return (N,H,W) uint8 in {0,1}.
-    """
-    name = uploaded_file.name.lower()
-    data = uploaded_file if hasattr(uploaded_file, "read") else uploaded_file
-    # Streamlit UploadedFile is file-like; tifffile/numpy can consume it directly.
-    if name.endswith((".tif", ".tiff")):
-        return _load_tiff(data)
-    if name.endswith(".npy"):
-        return _load_npy(data)
-    if name.endswith(".npz"):
-        return _load_npz(data)
-    raise ValueError(f"Unsupported mask file type: {uploaded_file.name}")
+    buf.seek(0)
+    return buf.getvalue()

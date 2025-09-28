@@ -13,7 +13,8 @@ from contextlib import nullcontext
 from helpers import config as cfg  # CKPT_PATH, CFG_PATH
 import numpy as np
 from PIL import Image, ImageDraw
-from typing import List, Tuple, Dict, Any
+from typing import Dict, Any
+from scipy import ndimage as ndi
 
 
 # ============================================================
@@ -27,6 +28,20 @@ def is_unique_box(box, boxes):
         if b == (x0, y0, x1, y1):
             return False
     return True
+
+
+def keep_largest_part(mask: np.ndarray) -> np.ndarray:
+    """Return only the largest connected component of a boolean mask."""
+    if not np.any(mask):
+        return np.zeros_like(mask, dtype=bool)
+
+    lab, n = ndi.label(mask)
+    if n == 1:
+        return mask.astype(bool)
+
+    sizes = np.bincount(lab.ravel())
+    sizes[0] = 0  # background
+    return lab == sizes.argmax()
 
 
 def boxes_to_fabric_rects(boxes, scale=1.0) -> Dict[str, Any]:
@@ -139,19 +154,34 @@ def composite_over(image_u8, masks_u8, alpha=0.5):
     return (np.clip(out, 0, 1) * 255).astype(np.uint8)
 
 
+def _prep_for_sam(img: np.ndarray) -> np.ndarray:
+    a = img
+    if a.ndim == 2:
+        a = np.repeat(a[..., None], 3, axis=2)
+    elif a.ndim == 3 and a.shape[2] == 4:
+        a = np.array(Image.fromarray(a).convert("RGB"))
+    a = a.astype(np.float32)
+    mx = a.max() if a.size else 1.0
+    if mx > 1.0:
+        a /= 255.0 if mx <= 255 else (65535.0 if mx <= 65535 else mx)
+    return a
+
+
 def _run_sam2_on_boxes(cur: dict):
-    """Predict with SAM2 for the current record's boxes and return a (B,H,W) uint8 stack."""
-    boxes = np.array(cur["boxes"], dtype=np.float32)
+    """Return a list of (H,W) boolean masks — best mask per box."""
+    boxes = np.asarray(cur.get("boxes", []), dtype=np.float32)
     if boxes.size == 0:
         st.info("No boxes drawn yet.")
-        return np.zeros((0, cur["H"], cur["W"]), dtype=np.uint8)
+        return []
+    if boxes.ndim == 1:
+        boxes = boxes[None, :]  # (1,4)
 
-    w = boxes[:, 2] - boxes[:, 0]
-    h = boxes[:, 3] - boxes[:, 1]
+    # drop degenerate
+    w, h = boxes[:, 2] - boxes[:, 0], boxes[:, 3] - boxes[:, 1]
     boxes = boxes[(w > 0) & (h > 0)]
     if boxes.size == 0:
         st.info("All boxes were empty.")
-        return np.zeros((0, cur["H"], cur["W"]), dtype=np.uint8)
+        return []
 
     device = (
         "cuda"
@@ -159,103 +189,106 @@ def _run_sam2_on_boxes(cur: dict):
         else ("mps" if torch.backends.mps.is_available() else "cpu")
     )
     sam = build_sam2(
-        cfg.CFG_PATH, cfg.CKPT_PATH, device=device, apply_postprocessing=False
+        cfg.CFG_PATH,
+        cfg.CKPT_PATH,
+        device=device,
+        apply_postprocessing=False,  # post-processing not supported with MPS :(
     )
     predictor = SAM2ImagePredictor(sam)
 
+    img_float = _prep_for_sam(cur["image"])
     amp = (
         torch.autocast("cuda", dtype=torch.bfloat16)
         if device == "cuda"
         else nullcontext()
     )
-    with torch.inference_mode():
-        with amp:
-            predictor.set_image(cur["image"])
+    with torch.inference_mode(), amp:
+        predictor.set_image(img_float)
+        masks, scores, _ = predictor.predict(
+            point_coords=None, point_labels=None, box=boxes, multimask_output=True
+        )
 
-    masks, scores, _ = predictor.predict(
-        point_coords=None,
-        point_labels=None,
-        box=boxes,
-        multimask_output=True,
-    )
-
-    # Handle torch tensors or numpy
+    # to numpy
     if isinstance(masks, torch.Tensor):
         masks = masks.detach().cpu().numpy()
     if isinstance(scores, torch.Tensor):
         scores = scores.detach().cpu().numpy()
 
-    # masks is (B, M, H, W); pick best per box -> (B, H, W)
-    best_idx = scores.argmax(-1)  # (B,)
-    row_idx = np.arange(scores.shape[0])  # (B,)
-    masks_best = masks[row_idx, best_idx, ...]  # (B,H,W)
+    # normalize shapes:
+    if masks.ndim == 3:
+        masks = masks[None, ...]
+    if scores.ndim == 1:
+        scores = scores[None, ...]
 
-    # --- Normalize to canonical stack: uint8 {0,1}, correct (H,W) ---
-    H, W = cur["H"], cur["W"]
-    # If SAM already returns bool, astype handles it; if float, >0 handles it.
-    masks_best = (masks_best > 0).astype(np.uint8)
+    B = scores.shape[0]
+    best = scores.argmax(-1)  # (B,)
+    masks_best = masks[np.arange(B), best]  # (B,H,W)
 
-    if masks_best.shape[-2:] != (H, W):
-        masks_best = np.stack(
-            [_resize_mask_nearest(mi, H, W) for mi in masks_best], axis=0
-        ).astype(np.uint8)
-
-    # Ensure contiguous (helps later concatenations)
-    return np.ascontiguousarray(masks_best, dtype=np.uint8)
-
-
-def append_masks_to_rec(rec: dict, new_masks: np.ndarray):
-    H, W = rec["H"], rec["W"]
-    if not isinstance(rec.get("masks"), np.ndarray) or rec["masks"].ndim != 3:
-        rec["masks"] = np.zeros((0, H, W), dtype=np.uint8)
-    rec.setdefault("labels", [])
-
-    nm = np.asarray(new_masks)
-    if nm.size == 0:
-        return rec
-    if nm.ndim == 2:
-        nm = nm[None, ...]  # (1,H,W)
-    if nm.shape[-2:] != (H, W):
-        nm = np.stack([_resize_mask_nearest(mi.astype(np.uint8), H, W) for mi in nm], 0)
-    nm = (nm > 0).astype(np.uint8)  # binary uint8
-
-    rec["masks"] = np.concatenate([rec["masks"], nm], axis=0)
-    rec["labels"].extend([None] * nm.shape[0])
-    return rec
-
-
-def zip_all_masks(images: dict, keys: list[int]) -> bytes:
-    buf = io.BytesIO()
-    with ZipFile(buf, "w") as zf:
-        for k in keys:
-            rec = images[k]
-            H, W = rec["H"], rec["W"]
-            m = rec.get("masks")
-
-            if m is None or getattr(m, "size", 0) == 0:
-                inst = np.zeros((H, W), np.uint16)
-            else:
-                m = np.asarray(m)
-                if m.size == 0:
-                    inst = np.zeros((H, W), np.uint16)
-                else:
-                    if m.ndim == 2:
-                        m = m[None, ...]
-                    elif m.ndim == 3 and m.shape[-1] == 1:
-                        m = m[..., 0]
-                    m = (m > 0).astype(np.uint8)
-                    if m.shape[-2:] != (H, W):
-                        m = np.stack([_resize_mask_nearest(mi, H, W) for mi in m], 0)
-                    inst = stack_to_instances_binary_first(m)
-
-            b = io.BytesIO()
-            tiff.imwrite(
-                b, inst, dtype=np.uint16, photometric="minisblack", compression="zlib"
+    H, W = int(cur["H"]), int(cur["W"])
+    out = []
+    for mi in masks_best:
+        mi = mi > 0
+        if mi.shape != (H, W):
+            mi = np.array(
+                Image.fromarray(mi.astype(np.uint8)).resize((W, H), Image.NEAREST),
+                dtype=bool,
             )
-            zf.writestr(f"{Path(rec['name']).stem}_mask.tif", b.getvalue())
+        out.append(mi)
+    return out
 
-    buf.seek(0)
-    return buf.getvalue()  # <-- make sure this line exists
+
+# masks can be cut when adding them to the existing array (new masks lose priority).
+# therefore, add mask, rextract to see if it is cut, if so, take it out and re-add the largest section
+def keep_largest_part(mask: np.ndarray) -> np.ndarray:
+    """Return only the largest connected component of a boolean mask."""
+    if not np.any(mask):
+        return np.zeros_like(mask, dtype=bool)
+    lab, n = ndi.label(mask)
+    if n == 1:
+        return mask.astype(bool)
+    sizes = np.bincount(lab.ravel())
+    sizes[0] = 0
+    return lab == sizes.argmax()
+
+
+def integrate_new_mask(original: np.ndarray, new_binary: np.ndarray):
+    """
+    Add a new mask into a label image.
+    - original: (H,W) int labels, 0=background, 1..N instances
+    - new_binary: (H,W) boolean mask
+    Returns (updated_label_image, new_id or None)
+    """
+    out = original
+    nb = new_binary.astype(bool)
+    if nb.ndim != 2 or not nb.any():
+        return out, None
+
+    # write only where background
+    write = (out == 0) & nb
+    if not write.any():
+        return out, None
+
+    max_id = int(out.max(initial=0))
+    new_id = max_id + 1
+
+    # upcast if needed
+    if new_id > np.iinfo(out.dtype).max:
+        out = out.astype(np.uint32)
+    else:
+        out = out.copy()
+
+    out[write] = new_id
+
+    # --- check contiguity: keep only the largest surviving component ---
+    mask_new = out == new_id
+    mask_new = keep_largest_part(mask_new)
+    if not mask_new.any():
+        return original, None  # nothing left after check
+
+    out[out == new_id] = 0  # clear possibly cut version
+    out[mask_new] = new_id  # reapply only largest part
+
+    return out, new_id
 
 
 def stack_to_instances_binary_first(m: np.ndarray) -> np.ndarray:
@@ -311,43 +344,52 @@ def get_class_palette(labels, *, ss_key="class_colors"):
     return pal
 
 
-def composite_over_by_class(image_u8, masks_u8, classes_map, palette, alpha=0.5):
+def composite_over_by_class(image_u8, label_inst, classes_map, palette, alpha=0.5):
+    """
+    image_u8:  uint8 RGB image, shape (H, W, 3)
+    label_inst: uint{8,16,32} label image, shape (H, W), 0=background, 1..N=instances
+    classes_map: dict[int -> class_name]
+    palette: dict[class_name -> (r,g,b) in 0..1]
+    alpha: overlay opacity for filled region
+    """
     H, W = image_u8.shape[:2]
-    m = np.asarray(masks_u8)
-    if m is None or m.size == 0:
+    inst = np.asarray(label_inst)
+
+    if inst.ndim != 2:
+        raise ValueError("label_inst must be a 2D label image (H, W)")
+    if inst.shape != (H, W):
+        # nearest to preserve integer labels
+        inst = np.array(
+            Image.fromarray(inst).resize((W, H), Image.NEAREST), dtype=inst.dtype
+        )
+
+    if inst.size == 0 or not np.any(inst):
         return image_u8
 
-    if m.ndim == 2:
-        m = m[None, ...]
-    elif m.ndim == 3 and m.shape[-1] == 1:
-        m = m[..., 0]
-    if m.shape[-2:] != (H, W):
-        m = np.stack([_resize_mask_nearest(mi.astype(np.uint8), H, W) for mi in m], 0)
-    m = (m > 0).astype(np.uint8)
-
-    # *** no active filtering here ***
-    inst = stack_to_instances_binary_first(m)
     out = image_u8.astype(np.float32) / 255.0
 
     ids = np.unique(inst)
-    ids = ids[ids != 0]
+    ids = ids[ids != 0]  # skip background
+
     for iid in ids:
         cls = classes_map.get(int(iid), "__unlabeled__")
         color = np.array(palette.get(cls, palette["__unlabeled__"]), dtype=np.float32)
+
         mm = inst == iid
+
+        # fill
         a = (mm.astype(np.float32) * alpha)[..., None]
         out = out * (1 - a) + color[None, None, :] * a
 
-        mb = mm
+        # 1px white edge (simple interior test)
         interior = (
-            mb
-            & np.roll(mb, 1, 0)
-            & np.roll(mb, -1, 0)
-            & mb
-            & np.roll(mb, 1, 1)
-            & np.roll(mb, -1, 1)
+            mm
+            & np.roll(mm, 1, 0)
+            & np.roll(mm, -1, 0)
+            & np.roll(mm, 1, 1)
+            & np.roll(mm, -1, 1)
         )
-        edge = mb & ~interior
+        edge = mm & ~interior
         out[edge] = 1.0
 
     return (np.clip(out, 0, 1) * 255).astype(np.uint8)

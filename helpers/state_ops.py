@@ -45,37 +45,6 @@ def image_key(uploaded_file) -> str:
     return f"{uploaded_file.name}:{len(b)}"
 
 
-def ensure_image(uploaded_file):
-    name = uploaded_file.name
-    m = st.session_state.name_to_key
-    imgs = st.session_state.images
-
-    # already have it → focus it
-    if name in m:
-        st.session_state.current_key = m[name]
-        return
-
-    # new record
-    img_np = np.array(Image.open(uploaded_file).convert("RGB"), dtype=np.uint8)
-    H, W = img_np.shape[:2]
-    k = st.session_state.next_ord
-    st.session_state.next_ord += 1
-
-    imgs[k] = {
-        "name": name,
-        "image": img_np,
-        "H": H,
-        "W": W,
-        "masks": np.zeros((0, H, W), dtype=np.uint8),
-        "labels": [],
-        "boxes": [],
-        "last_click_xy": None,
-        "canvas": {"closed_json": None, "processed_count": 0},
-    }
-    m[name] = k
-    st.session_state.current_key = k
-
-
 def ordered_keys():
     return sorted(st.session_state.images.keys())
 

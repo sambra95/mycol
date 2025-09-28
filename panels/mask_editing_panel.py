@@ -4,22 +4,21 @@ import streamlit as st
 from PIL import Image
 from streamlit_drawable_canvas import st_canvas
 from streamlit_image_coordinates import streamlit_image_coordinates
-from helpers.mask_editing_functions import zip_all_masks
+from helpers.upload_download_functions import zip_all_masks
 from helpers.cellpose_functions import (
     _has_cellpose_model,
     segment_rec_with_cellpose,
 )
 from helpers.state_ops import ordered_keys, set_current_by_index, current
 from helpers.mask_editing_functions import (
-    _resize_mask_nearest,
     _run_sam2_on_boxes,
-    append_masks_to_rec,
     is_unique_box,
     boxes_to_fabric_rects,
     draw_boxes_overlay,
     polygon_to_mask,
     composite_over_by_class,
     get_class_palette,
+    integrate_new_mask,
 )
 from helpers.classifying_functions import classes_map_from_labels
 
@@ -95,10 +94,13 @@ def render_sidebar(*, key_ns: str = "side"):
             segment_rec_with_cellpose(st.session_state.images.get(k))
             pb.progress(i / n, text=f"Segmented {i}/{n}")
         pb.empty()
+
     # --- Box utilities
+    # --- boxes are used to guide cell mask predictions from SAM2
     row = st.container()
     c1, c2, c3 = row.columns([1, 1, 1])
 
+    # resets the boxes list of the record to an empty list
     if c1.button("Clear boxes", use_container_width=True, key=f"{key_ns}_clear_boxes"):
         rec["boxes"] = []
         st.session_state["pred_canvas_nonce"] = (
@@ -106,6 +108,7 @@ def render_sidebar(*, key_ns: str = "side"):
         )
         st.rerun()
 
+    # removes the last bix from the box list of the record
     if c2.button("Remove last box", use_container_width=True, key=f"{key_ns}_undo_box"):
         if rec["boxes"]:
             rec["boxes"].pop()
@@ -114,13 +117,22 @@ def render_sidebar(*, key_ns: str = "side"):
             )
             st.rerun()
 
+    # masks are predicted for any boxes displayed on the image
     if c3.button(
         "Predict masks in boxes", use_container_width=True, key=f"{key_ns}_predict"
     ):
         new_masks = _run_sam2_on_boxes(rec)
-        append_masks_to_rec(
-            rec, new_masks
-        )  # your existing function that mutates rec and reruns
+        for mask in new_masks:
+            inst, new_id = integrate_new_mask(rec["masks"], mask)
+            if new_id is not None:
+                rec["masks"] = inst
+                # keep labels list aligned: index i -> instance id i+1
+                L = rec.get("labels", [])
+                if len(L) < new_id:  # pad if needed
+                    L.extend([None] * (new_id - len(L)))
+                rec["labels"] = L
+                added_any = True
+
         rec["boxes"] = []
         st.session_state["pred_canvas_nonce"] = (
             st.session_state.get("pred_canvas_nonce", 0) + 1
@@ -133,7 +145,7 @@ def render_sidebar(*, key_ns: str = "side"):
 
     # Remove all masks from the record
     if c4.button("Clear masks", use_container_width=True, key=f"{key_ns}_clear_masks"):
-        rec["masks"] = np.zeros((0, rec["H"], rec["W"]), dtype=np.uint8)
+        rec["masks"] = np.zeros((rec["H"], rec["W"]), dtype=np.uint16)
         rec["labels"] = []
         rec["last_click_xy"] = None
         st.rerun()
@@ -142,15 +154,15 @@ def render_sidebar(*, key_ns: str = "side"):
     if c5.button(
         "Remove last mask", use_container_width=True, key=f"{key_ns}_undo_mask"
     ):
-        if getattr(rec["masks"], "size", 0) > 0:
-            # drop the last mask
-            rec["masks"] = rec["masks"][:-1]
-            rec["labels"][:-1]
+        max_id = int(rec["masks"].max())
+        rec["masks"][rec["masks"] == max_id] = 0
 
-            st.session_state["pred_canvas_nonce"] = (
-                st.session_state.get("pred_canvas_nonce", 0) + 1
-            )
-            st.rerun()
+        rec["labels"] = rec["labels"][:-1]
+
+        st.session_state["pred_canvas_nonce"] = (
+            st.session_state.get("pred_canvas_nonce", 0) + 1
+        )
+        st.rerun()
 
     # Download
 
@@ -191,26 +203,24 @@ def render_main(
     )
     disp_w, disp_h = int(rec["W"] * scale), int(rec["H"] * scale)
 
-    # render the image and mask overlay
-    display_img = rec["image"]
-    if st.session_state["show_overlay"] and rec["masks"].shape[0] > 0:
-        labels = st.session_state.setdefault("all_classes", ["positive", "negative"])
-        palette = get_class_palette(labels)
-        classes_map = classes_map_from_labels(rec["masks"], rec["labels"])
-        display_img = composite_over_by_class(
-            rec["image"], rec["masks"], classes_map, palette, alpha=0.35
-        )
+    labels = st.session_state.setdefault("all_classes", ["Remove label"])
+    palette = get_class_palette(labels)
+    classes_map = classes_map_from_labels(rec["masks"], rec["labels"])
+    display_img = composite_over_by_class(
+        rec["image"], rec["masks"], classes_map, palette, alpha=0.35
+    )
+
+    # PIL safety: ensure uint8 RGB before resizing (won't work for uint16)
     display_for_ui = np.array(
-        Image.fromarray(display_img).resize((disp_w, disp_h), Image.BILINEAR)
+        Image.fromarray(display_img.astype(np.uint8)).resize(
+            (disp_w, disp_h), Image.BILINEAR
+        )
     )
 
     # ensure nonces exist locally to avoid KeyErrors when called from this module
 
     if st.session_state["side_interaction_mode"] == "Draw mask":
         bg = Image.fromarray(display_for_ui).convert("RGBA")
-
-        # We don't pre-seed strokes; existing masks are already shown in the overlay image.
-        num_initial = 0  # exactly like boxes, but we start with an empty canvas
 
         canvas_result = st_canvas(
             fill_color="rgba(0, 0, 255, 0.30)",
@@ -221,41 +231,45 @@ def render_main(
             update_streamlit=True,
             width=disp_w,
             height=disp_h,
-            drawing_mode="freedraw",  # keep as freehand drawing
+            drawing_mode="freedraw",
             point_display_radius=3,
-            initial_drawing=None,  # important: start empty every run
+            initial_drawing=None,
             key=f"{key_ns}_canvas_edit_{st.session_state['edit_canvas_nonce']}",
         )
 
         if canvas_result.json_data:
-            objs = canvas_result.json_data.get("objects", [])
             added_any = False
-
-            # process only objects drawn this run
-            for obj in objs[num_initial:]:
-                # accept Fabric "path" (from freedraw) and optional "polygon" if you switch modes later
+            for obj in canvas_result.json_data.get("objects", []):
                 if obj.get("type") not in ("path", "polygon"):
                     continue
 
-                # 1) create a display-sized mask from the drawn object
-                mask_disp = polygon_to_mask(
-                    obj, disp_h, disp_w
-                )  # (disp_h, disp_w) uint8 {0,1}
+                # 1) display-size raster
+                mask_disp = polygon_to_mask(obj, disp_h, disp_w).astype(
+                    np.uint16
+                )  # (disp_h,disp_w) in {0,1}
 
-                # 2) resize to image resolution + push into rec["masks"]
-                mask_img = (
-                    _resize_mask_nearest(mask_disp, rec["H"], rec["W"]) > 0
-                ).astype(
-                    np.uint8
-                )  # (H,W)
-                rec["masks"] = np.concatenate(
-                    [rec["masks"], mask_img[None, ...]], axis=0
-                )  # (N+1,H,W)
-                rec["labels"].append(None)
+                # 2) resize to full resolution (nearest keeps labels crisp)
+                mask_full = (
+                    np.array(
+                        Image.fromarray(mask_disp).resize(
+                            (rec["W"], rec["H"]), Image.NEAREST
+                        ),
+                        dtype=np.uint16,
+                    )
+                    > 0
+                )  # (H,W) bool
 
-                added_any = True
+                # 3) integrate into label image
+                inst, new_id = integrate_new_mask(rec["masks"], mask_full)
+                if new_id is not None:
+                    rec["masks"] = inst
+                    # keep labels list aligned: index i -> instance id i+1
+                    L = rec.get("labels", [])
+                    if len(L) < new_id:  # pad if needed
+                        L.extend([None] * (new_id - len(L)))
+                    rec["labels"] = L
+                    added_any = True
 
-            # 3) re-render (also clears the canvas because the key/nonce changes)
             if added_any:
                 st.session_state["edit_canvas_nonce"] += 1
                 st.rerun()
@@ -315,44 +329,50 @@ def render_main(
 
     # remove masks by clicking on them
     elif st.session_state["side_interaction_mode"] == "Remove mask":
-
-        # record the click
         click = streamlit_image_coordinates(
-            display_for_ui, key=f"{key_ns}_mask_click_remove", width=disp_w
+            display_for_ui, key=f"{key_ns}_rm", width=disp_w
         )
-
-        if click:
-            x = int(round(int(click["x"]) / scale))
-            y = int(round(int(click["y"]) / scale))
-
-            # rec.get("last_click_xy") makes sure that deletion occurs once per click
+        if not click:
+            pass
+        else:
+            x, y = int(round(int(click["x"]) / scale)), int(
+                round(int(click["y"]) / scale)
+            )
             if (
                 0 <= x < rec["W"]
                 and 0 <= y < rec["H"]
                 and (x, y) != rec.get("last_click_xy")
             ):
+                inst = rec.get("masks")
+                if isinstance(inst, np.ndarray) and inst.ndim == 2 and inst.size:
+                    iid = int(inst[y, x])
+                    if iid > 0:
+                        inst = inst.copy()
+                        inst[inst == iid] = 0  # remove clicked instance
 
-                m = rec.get("masks")
-                if isinstance(m, np.ndarray) and m.size:
-                    m = np.asarray(m)
+                        # relabel to 0,1..K (contiguous)
+                        vals, inv = np.unique(
+                            inst, return_inverse=True
+                        )  # sorted unique ids incl. 0
+                        if vals.size > 1:
+                            new_vals = np.zeros_like(vals)
+                            nz = vals != 0
+                            new_vals[nz] = np.arange(1, nz.sum() + 1, dtype=inst.dtype)
+                            inst = new_vals[inv].reshape(inst.shape)
+                            # sync labels: keep order of surviving old ids
+                            if isinstance(rec.get("labels"), list):
+                                old = rec["labels"]
+                                rec["labels"] = [
+                                    old[v - 1]
+                                    for v in vals
+                                    if v != 0 and 0 < v <= len(old)
+                                ]
+                        else:
+                            if isinstance(rec.get("labels"), list):
+                                rec["labels"].clear()
 
-                    # Hit-test: which masks cover (y, x)?
-                    hits = [i for i in range(m.shape[0]) if m[i, y, x] > 0]
-
-                    if hits:
-                        kill = hits[-1]  # delete the topmost/last one that hits
-                        rec["masks"] = np.delete(m, kill, axis=0)
-
-                        # keep metadata in sync if present
-                        if (
-                            isinstance(rec.get("labels"), list)
-                            and len(rec["labels"]) > kill
-                        ):
-                            del rec["labels"][kill]
-
-                        # remember last click to avoid double-fires on st.rerun()
+                        rec["masks"] = inst
                         rec["last_click_xy"] = (x, y)
-
                         st.rerun()
 
     # "Remove boxes by clicking on them"

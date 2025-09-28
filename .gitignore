@@ -9,6 +9,7 @@ secret.txt
 *.log
 *.tif
 *.yaml
+*.npy
 
 # Ignore compiled Python files
 __pycache__/

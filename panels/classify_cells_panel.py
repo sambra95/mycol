@@ -209,7 +209,7 @@ def render_main(*, key_ns: str = "edit"):
             m = rec["masks"]
             if m.ndim == 2:
                 m = m[None, ...]
-            m = (m > 0).astype(np.uint8)
+            m = (m > 0).astype(np.uint16)
 
             hits = [i for i in range(m.shape[0]) if m[i, y0, x0] > 0]
             if hits:

@@ -180,46 +180,105 @@ def _plot_losses(train_losses, test_losses):
 def compare_models_mean_iou_plot(
     images, masks, base_model_name="cyto2", channels=(0, 0)
 ):
-    """
-    Compare mean IoU between base and fine-tuned Cellpose models
-    and plot a bar chart with SD error bars and individual points.
-    """
     use_gpu = core.use_gpu()
 
-    # Base (original) model
-    base_model = models.CellposeModel(gpu=use_gpu, model_type=base_model_name)
-    base_preds, _, _ = base_model.eval(images, channels=channels)
+    # Base/original model
+    base = models.CellposeModel(gpu=use_gpu, model_type=base_model_name)
+    base_preds, _, _ = base.eval(list(images), channels=list(channels))
 
-    # Fine-tuned model (from session state)
-    tuned_model = models.CellposeModel(
-        gpu=use_gpu, pretrained_model=st.session_state["cellpose_model_bytes"]
-    )
-    tuned_preds, _, _ = tuned_model.eval(images, channels=channels)
+    # Fine-tuned model from session BYTES -> load into same model_type
+    tuned = models.CellposeModel(gpu=use_gpu, model_type=base_model_name)
+    ft_bytes = st.session_state.get("cellpose_model_bytes")
+    if ft_bytes:
+        sd = torch.load(IO.BytesIO(ft_bytes), map_location="cpu")
+        tuned.net.load_state_dict(sd)
+    tuned_preds, _, _ = tuned.eval(list(images), channels=list(channels))
 
-    # Compute IoUs
+    # IoU per image (AP @ IoU=0.5 over labels)
     base_ious = [
-        metrics.average_precision([m], [p])[0][:, 0].mean()
-        for m, p in zip(masks, base_preds)
+        metrics.average_precision([gt], [pr])[0][:, 0].mean()
+        for gt, pr in zip(masks, base_preds)
     ]
     tuned_ious = [
-        metrics.average_precision([m], [p])[0][:, 0].mean()
-        for m, p in zip(masks, tuned_preds)
+        metrics.average_precision([gt], [pr])[0][:, 0].mean()
+        for gt, pr in zip(masks, tuned_preds)
     ]
 
-    # Plot
-    fig, ax = plt.subplots(figsize=(4, 4))
-    data = [base_ious, tuned_ious]
-    labels = ["Base", "Fine-tuned"]
-    means = [np.mean(d) for d in data]
-    stds = [np.std(d) for d in data]
+    def _count_instances(lbl):
+        return int(np.count_nonzero(np.unique(lbl)))  # #unique nonzero ids
 
-    ax.bar(labels, means, yerr=stds, capsize=5, alpha=0.7)
-    for i, vals in enumerate(data):
-        ax.scatter([labels[i]] * len(vals), vals, color="black", zorder=10)
+    # --- IoU data already computed earlier ---
+    labels = ["Original", "Fine-tuned"]
+    means = [np.mean(base_ious), np.mean(tuned_ious)]
+    sds = [
+        np.std(base_ious, ddof=1) if len(base_ious) > 1 else 0.0,
+        np.std(tuned_ious, ddof=1) if len(tuned_ious) > 1 else 0.0,
+    ]
 
-    ax.set_ylabel("Mean IoU")
-    ax.set_title("Base vs Fine-tuned Cellpose")
+    # --- Count instances ---
+    gt_counts = [_count_instances(m) for m in masks]
+    base_counts = [_count_instances(pr) for pr in base_preds]
+    tuned_counts = [_count_instances(pr) for pr in tuned_preds]
+
+    lim = max(1, max(gt_counts + base_counts + tuned_counts)) if gt_counts else 1
+
+    # --- Three subplots: IoU bar + scatter (original) + scatter (fine-tuned) ---
+    fig, (ax0, ax1, ax2) = plt.subplots(1, 3, figsize=(12, 4))
+
+    # Panel 1: Mean IoU
+    ax0.bar(np.arange(2), means, yerr=sds, capsize=5, alpha=0.8, edgecolor="black")
+    jitter = 0.12
+    ax0.scatter(
+        np.zeros(len(base_ious)) + (np.random.rand(len(base_ious)) - 0.5) * jitter,
+        base_ious,
+        s=18,
+        color="k",
+        zorder=10,
+    )
+    ax0.scatter(
+        np.ones(len(tuned_ious)) + (np.random.rand(len(tuned_ious)) - 0.5) * jitter,
+        tuned_ious,
+        s=18,
+        color="k",
+        zorder=10,
+    )
+    ax0.set_xticks([0, 1])
+    ax0.set_xticklabels(labels)
+    ax0.set_ylim(0, 1.05)
+    ax0.set_ylabel("Mean IoU")
+    ax0.set_title("IoU Comparison")
+    ax0.grid(alpha=0.3)
+
+    # Panel 2: Original counts vs GT
+    ax1.scatter(gt_counts, base_counts, s=28, alpha=0.85, label="Original")
+    ax1.plot([0, lim], [0, lim], ls="--", lw=1, color="gray")
+    ax1.set_title("Original vs GT counts")
+    ax1.set_xlabel("Ground-truth #instances")
+    ax1.set_ylabel("Predicted #instances")
+    ax1.set_xlim(-0.5, lim + 0.5)
+    ax1.set_ylim(-0.5, lim + 0.5)
+    ax1.grid(alpha=0.3)
+
+    # Panel 3: Fine-tuned counts vs GT
+    ax2.scatter(
+        gt_counts,
+        tuned_counts,
+        s=28,
+        alpha=0.85,
+        color="tab:orange",
+        label="Fine-tuned",
+    )
+    ax2.plot([0, lim], [0, lim], ls="--", lw=1, color="gray")
+    ax2.set_title("Fine-tuned vs GT counts")
+    ax2.set_xlabel("Ground-truth #instances")
+    ax2.set_xlim(-0.5, lim + 0.5)
+    ax2.set_ylim(-0.5, lim + 0.5)
+    ax2.grid(alpha=0.3)
+
+    fig.suptitle("Original vs Fine-tuned Model Comparison", fontsize=13)
+    plt.tight_layout()
     st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
 
 
 def finetune_cellpose_from_records(
@@ -233,6 +292,15 @@ def finetune_cellpose_from_records(
         images, masks, test_size=0.2, random_state=42, shuffle=True
     )
 
+    n_train_imgs, n_test_imgs = len(train_images), len(test_images)
+    n_train_masks = sum(np.max(m) for m in train_masks)
+    n_test_masks = sum(np.max(m) for m in test_masks)
+
+    st.info(
+        f"Training on **{n_train_imgs} images** with **{n_train_masks} masks** "
+        f"(+ {n_test_imgs} test images, {n_test_masks} masks)."
+    )
+
     use_gpu = core.use_gpu()
     channels = [0, 0]
     _ = io.logger_setup()
@@ -242,29 +310,26 @@ def finetune_cellpose_from_records(
         init_model = None
     cell_model = models.CellposeModel(gpu=use_gpu, model_type=init_model)
 
-    st.write("model loaded")
-
     if init_model == None:
         init_model = "scratch"
     model_name = f"{init_model}_finetuned.pt"
 
-    new_path, train_losses, test_losses = train.train_seg(
-        cell_model.net,
-        train_data=train_images,
-        train_labels=train_masks,
-        test_data=test_images,
-        test_labels=test_masks,
-        channels=channels,
-        n_epochs=20,
-        learning_rate=0.00005,
-        weight_decay=0.1,
-        SGD=True,
-        nimg_per_epoch=32,
-        model_name=model_name,
-        save_path=None,
-    )
-
-    st.write("fine tuning complete")
+    with st.spinner("Fine-tuning in progress…"):
+        new_path, train_losses, test_losses = train.train_seg(
+            cell_model.net,
+            train_data=train_images,
+            train_labels=train_masks,
+            test_data=test_images,
+            test_labels=test_masks,
+            channels=channels,
+            n_epochs=100,
+            learning_rate=0.00005,
+            weight_decay=0.1,
+            SGD=True,
+            nimg_per_epoch=32,
+            model_name=model_name,
+            save_path=None,
+        )
 
     # also place into session state like the uploader expects
 
@@ -273,6 +338,6 @@ def finetune_cellpose_from_records(
     st.session_state["cellpose_model_bytes"] = buf.getvalue()
     st.session_state["cellpose_model_name"] = model_name
 
-    st.write("model saved")
+    st.success("Fine-tuning complete ✅")
 
     return train_losses, test_losses

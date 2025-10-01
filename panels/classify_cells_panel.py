@@ -4,12 +4,10 @@ import streamlit as st
 from PIL import Image
 from streamlit_image_coordinates import streamlit_image_coordinates
 import pandas as pd
-from tensorflow.keras.applications.densenet import preprocess_input
 import cv2
 
 # from helpers.densenet_functions import classify_rec_with_densenet_batched
 from helpers.mask_editing_functions import (
-    get_class_palette,
     composite_over_by_class,
 )
 
@@ -17,11 +15,13 @@ from helpers.state_ops import ordered_keys, set_current_by_index, current
 
 from helpers.classifying_functions import (
     classes_map_from_labels,
-    make_classifier_zip,
-    extract_masked_cell_patch,
     _add_label_from_input,
-    emoji_for,
+    classify_cells_with_densenet,
+    color_hex_for,
     palette_from_emojis,
+    remove_class_everywhere,
+    _rename_class_from_input,
+    _row,
 )
 
 
@@ -31,27 +31,26 @@ import numpy as np
 import streamlit as st
 from PIL import Image
 import cv2
-from tensorflow.keras.applications.densenet import preprocess_input
 
 from helpers.state_ops import ordered_keys, set_current_by_index, current
 from helpers.classifying_functions import (
-    extract_masked_cell_patch,
     _add_label_from_input,
 )
 
-# stable emoji-per-class (also used by overlay if you choose)
-EMOJIS = ["🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "🟤", "⚫", "⚪"]
+# --- fixed class-color palette (RGB hex) ---
+# taken from your image (left→right), plus the gray at the end
+
+# --- fixed class-color palette (RGB hex) ---
 
 
-def emoji_for(name: str) -> str:
-    ss = st.session_state
-    emap = ss.setdefault("class_emojis", {})
-    if name and name not in emap:
-        emap[name] = EMOJIS[abs(hash(name)) % len(EMOJIS)]
-    return emap.get(name, "▫️")
+# --- CLASS RENAME / MERGE HELPERS ---
+
+ss = st.session_state
+ss.setdefault("all_classes", ["Remove label"])
 
 
 def render_sidebar(*, key_ns: str = "side"):
+
     ok = ordered_keys()
     if not ok:
         st.warning("Upload an image in **Upload data** first.")
@@ -82,90 +81,30 @@ def render_sidebar(*, key_ns: str = "side"):
         st.rerun()
 
     st.toggle("Show mask overlay", key="show_overlay")
-    st.divider()
-
-    # ---- DenseNet-121 classify button ----
-    st.markdown("### Classify with DenseNet-121")
-    if st.button("Classify cells (DenseNet-121)", use_container_width=True):
-        model = ss.get("densenet_model")
-        if model is None:
-            st.warning("Upload a DenseNet-121 classifier in the sidebar first.")
-        else:
-            M = rec.get("masks")
-            if not isinstance(M, np.ndarray) or M.ndim != 2 or not np.any(M):
-                st.info("No masks to classify.")
-            else:
-                all_classes = [
-                    c for c in ss.get("all_classes", []) if c != "Remove label"
-                ] or ["class0", "class1"]
-                ids = [int(v) for v in np.unique(M) if v != 0]
-                patches, keep_ids = [], []
-                for iid in ids:
-                    a = np.asarray(
-                        extract_masked_cell_patch(rec["image"], M == iid, size=64)
-                    )
-                    if a.ndim == 2:
-                        a = np.repeat(a[..., None], 3, axis=2)
-                    elif a.ndim == 3 and a.shape[2] == 4:
-                        a = cv2.cvtColor(a, cv2.COLOR_RGBA2RGB)
-                    elif a.ndim == 3 and a.shape[2] == 3:
-                        a = cv2.cvtColor(a, cv2.COLOR_BGR2RGB)
-                    a = cv2.resize(a, (64, 64), interpolation=cv2.INTER_AREA)
-                    patches.append(preprocess_input(a.astype(np.float32)))
-                    keep_ids.append(iid)
-
-                if not patches:
-                    st.info("No valid patches extracted.")
-                else:
-                    X = np.stack(patches, axis=0)
-                    preds = model.predict(X, verbose=0).argmax(axis=1)
-                    for iid, cls_idx in zip(keep_ids, preds):
-                        name = (
-                            all_classes[int(cls_idx)]
-                            if int(cls_idx) < len(all_classes)
-                            else str(int(cls_idx))
-                        )
-                        rec.setdefault("labels", {})[int(iid)] = name
-                        if (
-                            name
-                            and name != "Remove label"
-                            and name not in ss["all_classes"]
-                        ):
-                            ss["all_classes"].append(name)
-                        _ = emoji_for(name)  # ensure emoji assigned
-                    st.session_state.images[st.session_state.current_key] = rec
-                    st.success(f"Classified {len(keep_ids)} cells.")
-                    st.rerun()
 
     st.divider()
 
-    # ---- Simple class manager: add + quick pick with Select buttons ----
-    st.markdown("### Assign classes to cell masks")
+    st.markdown("### Classify cells")
+
+    if st.button("Classify this image with DenseNet-121", use_container_width=True):
+        classify_cells_with_densenet(rec)
+
+        # batch segment all images
+    if st.button(
+        "Batch classify all images with with DenseNet-121",
+        key="btn_batch_classify_cellpose",
+        use_container_width=True,
+    ):
+        n = len(ordered_keys())
+        pb = st.progress(0.0, text="Starting…")
+        for i, k in enumerate(ordered_keys(), 1):
+            classify_cells_with_densenet(st.session_state.images.get(k))
+            pb.progress(i / n, text=f"Segmented {i}/{n}")
+        pb.empty()
+
     labels = ss.setdefault("all_classes", ["Remove label"])
 
-    st.text_input(
-        "",
-        key="side_new_label",
-        placeholder="Type a new class here and press Enter",
-        on_change=_add_label_from_input(labels, ss.get("side_new_label", "")),
-    )
-
-    st.caption(f"Current click assign: **{ss.get('side_current_class','None')}**")
-
-    st.markdown("#### Assignable Classes")
     labdict = rec.get("labels", {}) if isinstance(rec.get("labels"), dict) else {}
-
-    def _row(name: str, count: int, key: str):
-        c1, c2, c3, c4 = st.columns([1, 5, 2, 3])
-        c1.write("🧹" if name == "Remove label" else emoji_for(name))
-        c2.write(f"**{name}**")
-        c3.write(str(count))
-        c4.button(
-            "Select",
-            key=key,
-            use_container_width=True,
-            on_click=lambda n=name: st.session_state.__setitem__("pending_class", n),
-        )
 
     # Unlabel row
     _row(
@@ -175,6 +114,54 @@ def render_sidebar(*, key_ns: str = "side"):
     # Actual classes
     for name in [c for c in labels if c != "Remove label"]:
         _row(name, sum(1 for v in labdict.values() if v == name), key=f"use_{name}")
+
+    st.caption(f"Current click assign: **{ss.get('side_current_class','None')}**")
+
+    if st.button(
+        key="clear_labels_btn", use_container_width=True, label="Clear mask labels"
+    ):
+        rec["labels"] = {int(i): None for i in np.unique(rec["masks"]) if i != 0}
+
+    st.divider()
+    st.markdown("### Manage classes")
+
+    st.text_input(
+        "",
+        key="side_new_label",
+        placeholder="Enter a new class here",
+        on_change=_add_label_from_input(labels, ss.get("side_new_label", "")),
+    )
+
+    st.text_input(
+        "",
+        key="delete_new_label",
+        placeholder="Delete class here.",
+        on_change=remove_class_everywhere(ss.get("delete_new_label", "")),
+    )
+
+    # Build options excluding the protected entry
+    editable_classes = [
+        c for c in st.session_state.get("all_classes", []) if c != "Remove label"
+    ]
+    if not editable_classes:
+        st.caption("No classes yet. Add a class above first.")
+    else:
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            st.selectbox(
+                "Class to relabel",
+                options=editable_classes,
+                key=f"{key_ns}_rename_from",
+            )
+        with c2:
+            st.text_input(
+                "New label",
+                key=f"{key_ns}_rename_to",
+                placeholder="Type the new class name and press Enter",
+                on_change=_rename_class_from_input(
+                    f"{key_ns}_rename_from", f"{key_ns}_rename_to"
+                ),
+            )
 
 
 def render_main(*, key_ns: str = "edit"):
@@ -188,26 +175,35 @@ def render_main(*, key_ns: str = "edit"):
     H, W = rec["H"], rec["W"]
     disp_w, disp_h = int(W * scale), int(H * scale)
 
-    display_img = rec["image"]
     M = rec.get("masks")
     has_instances = isinstance(M, np.ndarray) and M.ndim == 2 and M.any()
     if st.session_state.get("show_overlay", False) and has_instances:
-        labels_global = st.session_state.setdefault(
-            "all_classes", ["positive", "negative"]
-        )
-        palette = palette_from_emojis(labels_global)  # ← now matches table
+        # classes actually present in this image
         classes_map = classes_map_from_labels(
             M, rec.get("labels", {})
-        )  # dict {id->class/None}
-        display_img = composite_over_by_class(
+        )  # {id -> class or None}
+        present_classes = sorted(
+            {c for c in classes_map.values() if c and c != "Remove label"}
+        )
+
+        # ensure each present class has a stable session color (also keeps table + overlay in sync)
+        _ = [color_hex_for(c) for c in present_classes]
+
+        # build the palette from the present classes; if none, fall back to the global list
+        labels_global = st.session_state.setdefault("all_classes", ["Remove label"])
+        palette = palette_from_emojis(present_classes or labels_global)
+
+        display_for_ui = composite_over_by_class(
             rec["image"], M, classes_map, palette, alpha=0.35
         )
 
-    display_for_ui = np.array(
-        Image.fromarray(display_img.astype(np.uint8)).resize(
-            (disp_w, disp_h), Image.BILINEAR
+    else:
+        display_for_ui = np.array(
+            Image.fromarray(rec["image"].astype(np.uint8)).resize(
+                (disp_w, disp_h), Image.BILINEAR
+            )
         )
-    )
+
     click = streamlit_image_coordinates(
         display_for_ui, key=f"{key_ns}_img_click", width=disp_w
     )
@@ -228,11 +224,3 @@ def render_main(*, key_ns: str = "edit"):
                     st.rerun()
             else:
                 rec["last_click_xy"] = (x0, y0)
-
-    # # table of all masks with labels (default None)
-    # ids = np.unique(M) if isinstance(M, np.ndarray) and M.ndim == 2 else np.array([])
-    # ids = ids[ids != 0]
-    # labdict = rec.setdefault("labels", {})  # dict {id->class/None}
-    # rows = [{"instance_id": int(i), "label": labdict.get(int(i))} for i in ids]
-    # df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["instance_id", "label"])
-    # st.dataframe(df, hide_index=True, use_container_width=True)

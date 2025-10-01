@@ -7,46 +7,226 @@ import pandas as pd
 from pathlib import Path
 from zipfile import ZipFile
 import cv2
-
+from tensorflow.keras.applications.densenet import preprocess_input
+import numpy as np, cv2
+from skimage.exposure import rescale_intensity
 
 from helpers.state_ops import ordered_keys
 
 from helpers.mask_editing_functions import stack_to_instances_binary_first
 
-# --- builder: fills session_state["classifier_records_df"] and ["classifier_patches"] ---
+ss = st.session_state
 
-# --- shared emoji + color mapping ---
-EMOJIS = ["🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "🟤", "⚫", "⚪"]
-EMOJI_HEX = {  # pick hex closest to the emoji color
-    "🔴": "#e74c3c",
-    "🟠": "#e67e22",
-    "🟡": "#f1c40f",
-    "🟢": "#2ecc71",
-    "🔵": "#3498db",
-    "🟣": "#9b59b6",
-    "🟤": "#8d6e63",
-    "⚫": "#2d3436",
-    "⚪": "#bdc3c7",
-}
+PALETTE_HEX = [
+    "#DC050C",  # 26
+    "#5289C7",  # 12
+    "#4EB265",  # 15
+    "#F7F056",  # 18
+    "#882E72",  # 9
+    "#E8601C",  # 24
+    "#D1BBD7",  # 3
+    "#90C987",  # 16
+    "#F1932D",  # 22
+    "#CAE0AB",  # 17
+    "#F6C141",  # 20
+]
+_DEFAULT_FALLBACK_HEX = "#777777"
 
 
-def emoji_for(name: str) -> str:
+def _hex_to_rgb01(hx: str) -> tuple[float, float, float]:
+    return tuple(int(hx[i : i + 2], 16) / 255.0 for i in (1, 3, 5))
+
+
+def color_hex_for(name: str) -> str:
+    """
+    Deterministic, unique color per class name using session-backed mapping.
+    Reuses the palette without hashing collisions.
+    """
+    if not name or name == "Remove label":
+        return _DEFAULT_FALLBACK_HEX
+    cmap = st.session_state.setdefault("class_colors", {})
+    if name not in cmap:
+        # pick the first palette color not currently used; wrap if all are used
+        used = set(cmap.values())
+        choice = next((hx for hx in PALETTE_HEX if hx not in used), None)
+        if choice is None:
+            choice = PALETTE_HEX[len(cmap) % len(PALETTE_HEX)]
+        cmap[name] = choice
+    return cmap[name]
+
+
+def normalize_crop(image: np.ndarray) -> np.ndarray:
+    """
+    Apply Cellpose-specific normalization:
+    - Normalize by mean intensity
+    - Rescale to 0-1
+    """
+    im = image.astype(np.float32)
+    mean_val = np.mean(im)
+    if mean_val == 0:
+        raise ValueError("Image mean is zero; cannot normalize.")
+    meannorm = im * (0.5 / mean_val)
+    return rescale_intensity(meannorm, in_range="image", out_range=(0, 1))
+
+
+def _color_chip_md(hex_color: str, size: int = 14) -> str:
+    return (
+        f'<span style="display:inline-block;'
+        f"width:{size}px;height:{size}px;margin-top:2px;"
+        f"background:{hex_color};border:1px solid rgba(0,0,0,.15);"
+        f'border-radius:3px;"></span>'
+    )
+
+
+def _rename_class_from_input(old_key: str, new_key: str):
+    """Callback: read selected old class and typed new class from session_state and rename."""
+
+    def _cb():
+        ss = st.session_state
+        old = ss.get(old_key)
+        new = (ss.get(new_key, "") or "").strip()
+        if not old or not new or old == new:
+            return
+
+        # Keep the selection stable across reruns:
+        # set the selectbox's value to the *new* name so Streamlit won't
+        # fall back to the first option when `old` disappears from options.
+        ss[old_key] = new
+        ss[new_key] = ""
+
+        # Validate + apply (this may call st.rerun() internally)
+        rename_class_everywhere(old, new)
+
+    return _cb
+
+
+def _all_image_records():
+    """Yield all image records from session state safely."""
+    ims = st.session_state.get("images", {}) or {}
+    for k in ordered_keys():
+        rec = ims.get(k)
+        if isinstance(rec, dict):
+            yield k, rec
+
+
+def rename_class_everywhere(old_name: str, new_name: str):
+    """
+    Rename a class globally across the session. If new_name already exists,
+    labels with old_name are reassigned to new_name and old_name is removed.
+    This updates:
+      - st.session_state['all_classes']
+      - per-image rec['labels'] dicts
+      - st.session_state['side_current_class'] if it was old_name
+      - emoji map st.session_state['class_emojis']
+    """
     ss = st.session_state
+    if not old_name or old_name == "Remove label":
+        st.warning("That class cannot be renamed.")
+        return
+    new_name = (new_name or "").strip()
+    if not new_name or new_name == "Remove label":
+        st.warning("Please choose a non-empty class name that isn't reserved.")
+        return
+    if new_name == old_name:
+        st.info("No change needed.")
+        return
+
+    # Ensure class list exists
+    all_classes = ss.setdefault("all_classes", ["Remove label"])
+
+    # Track whether target already exists (merge)
+    target_exists = new_name in all_classes
+
+    # --- Update labels in every image record ---
+    changed_labels = 0
+    for _, rec in _all_image_records():
+        lab = rec.get("labels")
+        if isinstance(lab, dict):
+            # Re-assign values from old_name -> new_name
+            to_update = [iid for iid, cname in lab.items() if cname == old_name]
+            for iid in to_update:
+                lab[iid] = new_name
+            changed_labels += len(to_update)
+
+    # --- Update class list (merge or rename) ---
+    if old_name in all_classes:
+        all_classes = [c for c in all_classes if c != old_name]  # drop old
+    if new_name not in all_classes:
+        all_classes.append(new_name)
+    # Keep "Remove label" first if you prefer; otherwise keep as-is
+    # Re-assign back
+    ss["all_classes"] = all_classes
+
+    # --- Update current selection if needed ---
+    if ss.get("side_current_class") == old_name:
+        ss["side_current_class"] = new_name
+
+    # --- Update emojis ---
     emap = ss.setdefault("class_emojis", {})
-    if name not in emap:
-        emap[name] = EMOJIS[abs(hash(name)) % len(EMOJIS)]
-    return emap[name]
+    if target_exists:
+        # We’re merging into an existing class; keep the target’s emoji,
+        # drop the old one if present.
+        if old_name in emap:
+            emap.pop(old_name, None)
+    else:
+        # True rename: carry over old emoji if present, otherwise assign fresh later
+        if old_name in emap:
+            emap[new_name] = emap.pop(old_name)
+        else:
+            # touch to ensure emoji assignment exists for the new name
+            _ = color_hex_for(new_name)
+
+    st.rerun()
+
+
+def remove_class_everywhere(name: str):
+    """
+    Delete a class from the session. All masks with this class are unlabelled (set to None).
+    Updates:
+      - st.session_state['all_classes'] (removes the class)
+      - per-image rec['labels'] values (name -> None)
+      - st.session_state['side_current_class'] (fallback to "Remove label" if needed)
+      - emoji map st.session_state['class_emojis'] (removes entry)
+    """
+    ss = st.session_state
+
+    # Ensure class list exists and cant remove "Remove label"
+    if name == "Remove label":
+        return
+    all_classes = ss.setdefault("all_classes", ["Remove label"])
+    if name not in all_classes:
+        return
+
+    # Unlabel everywhere
+    changed = 0
+    for _, rec in _all_image_records():
+        lab = rec.get("labels")
+        if isinstance(lab, dict):
+            to_update = [iid for iid, cname in lab.items() if cname == name]
+            for iid in to_update:
+                lab[iid] = None
+            changed += len(to_update)
+
+    # Remove from class list & emoji map
+    ss["all_classes"] = [c for c in all_classes if c != name]
+    ss.setdefault("class_emojis", {}).pop(name, None)
+
+    # Fix current selection if needed
+    if ss.get("side_current_class") == name:
+        ss["side_current_class"] = "Remove label"
+    st.rerun()
 
 
 def palette_from_emojis(class_names):
-    """Return {class_name: (r,g,b)} in 0..1 derived from class_emojis; includes '__unlabeled__'."""
+    """
+    Return {class_name: (r,g,b)} in 0..1 using the fixed palette.
+    Includes '__unlabeled__' as white.
+    """
     pal = {"__unlabeled__": (1.0, 1.0, 1.0)}
     for n in class_names:
         if not n or n == "Remove label":
             continue
-        e = emoji_for(n)
-        hx = EMOJI_HEX.get(e, "#95a5a6")
-        pal[n] = tuple(int(hx[i : i + 2], 16) / 255.0 for i in (1, 3, 5))
+        pal[n] = _hex_to_rgb01(color_hex_for(n))
     return pal
 
 
@@ -59,8 +239,7 @@ def classes_map_from_labels(masks, labels):
         if iid == 0:
             continue
         cls = labels.get(int(iid))
-        if cls is not None:
-            classes_map[int(iid)] = cls
+        classes_map[int(iid)] = cls if cls not in (None, "") else "Remove label"
     return classes_map
 
 
@@ -79,9 +258,6 @@ def _to_square_patch(rgb: np.ndarray, patch_size: int = 256) -> np.ndarray:
     y0, x0 = (patch_size - nh) // 2, (patch_size - nw) // 2
     canvas[y0 : y0 + nh, x0 : x0 + nw] = resized
     return canvas
-
-
-import numpy as np, cv2
 
 
 def extract_masked_cell_patch(
@@ -163,6 +339,23 @@ def make_classifier_zip(patch_size: int = 64) -> bytes | None:
     return buf.getvalue() if rows else None
 
 
+def _row(name: str, count: int, key: str):
+    # icon | name | count | select |
+    c1, c2, c3, c4 = st.columns([1, 5, 2, 3])
+    if name == "Remove label":
+        c1.write(" ")
+    else:
+        c1.markdown(_color_chip_md(color_hex_for(name)), unsafe_allow_html=True)
+    c2.write(f"**{name}**")
+    c3.write(str(count))
+    c4.button(
+        "Select",
+        key=f"{key}_select",
+        use_container_width=True,
+        on_click=lambda n=name: st.session_state.__setitem__("pending_class", n),
+    )
+
+
 def _add_label_from_input(labels, new_label_ss):
     new_label = new_label_ss.strip()
     if not new_label:
@@ -172,3 +365,78 @@ def _add_label_from_input(labels, new_label_ss):
         labels.append(new_label)
     st.session_state["side_current_class"] = new_label
     st.session_state["side_new_label"] = ""
+
+
+def resize_with_aspect_ratio(img, target_size=64):
+    h, w = img.shape[:2]
+    scale = target_size / max(h, w)
+    new_w, new_h = int(w * scale), int(h * scale)
+    resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    # create square canvas
+    canvas = np.zeros(
+        (target_size, target_size, *([img.shape[2]] if img.ndim == 3 else [])),
+        dtype=img.dtype,
+    )
+    y0 = (target_size - new_h) // 2
+    x0 = (target_size - new_w) // 2
+    canvas[y0 : y0 + new_h, x0 : x0 + new_w] = resized
+    return canvas
+
+
+def classify_cells_with_densenet(rec: dict) -> None:
+    """Classify segmented cell masks in `rec` using a DenseNet-121 model.
+    Mutates `rec` and session_state, then triggers a rerun on success.
+    """
+    model = ss.get("densenet_model")
+    if model is None:
+        st.warning("Upload a DenseNet-121 classifier in the sidebar first.")
+        return
+
+    M = rec.get("masks")
+    if not isinstance(M, np.ndarray) or M.ndim != 2 or not np.any(M):
+        st.info("No masks to classify.")
+        return
+
+    # Build usable class names (fallback to two defaults)
+    all_classes = [c for c in ss.get("all_classes", []) if c != "Remove label"] or [
+        "class0",
+        "class1",
+    ]
+
+    # Gather instance ids and extract 64x64 patches
+    ids = [int(v) for v in np.unique(M) if v != 0]
+    patches, keep_ids = [], []
+
+    for iid in ids:
+        patch = np.asarray(extract_masked_cell_patch(rec["image"], M == iid, size=64))
+        if patch.ndim == 2:
+            patch = np.repeat(patch[..., None], 3, axis=2)
+        elif patch.ndim == 3 and patch.shape[2] == 4:
+            patch = cv2.cvtColor(patch, cv2.COLOR_RGBA2RGB)
+        elif patch.ndim == 3 and patch.shape[2] == 3:
+            patch = cv2.cvtColor(patch, cv2.COLOR_BGR2RGB)
+
+        patch = resize_with_aspect_ratio(patch, 64)
+        patches.append(preprocess_input(patch.astype(np.float32)))
+        keep_ids.append(iid)
+
+    if not patches:
+        st.info("No valid patches extracted.")
+        return
+
+    # Predict classes
+    X = np.stack(patches, axis=0)
+    preds = model.predict(X, verbose=0).argmax(axis=1)
+
+    # Write back labels, extend class list if needed
+    labels = rec.setdefault("labels", {})
+    for iid, cls_idx in zip(keep_ids, preds):
+        idx = int(cls_idx)
+        name = all_classes[idx] if idx < len(all_classes) else str(idx)
+        labels[int(iid)] = name
+        if name and name != "Remove label" and name not in ss.get("all_classes", []):
+            ss.setdefault("all_classes", []).append(name)
+
+    # Persist updated record and rerun UI
+    ss.images[ss.current_key] = rec

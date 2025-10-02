@@ -10,6 +10,60 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 
 
+def finetune_cellpose_from_records(
+    recs: dict,
+    base_model: str,
+    epochs=100,
+    learning_rate=0.00005,
+    weight_decay=0.1,
+    nimg_per_epoch=32,
+):
+    images = [_normalize_for_cellpose(recs[k]["image"]) for k in recs.keys()]
+    masks = [recs[k]["masks"].astype("uint16") for k in recs.keys()]
+
+    train_images, test_images, train_masks, test_masks = train_test_split(
+        images, masks, test_size=0.2, random_state=42, shuffle=True
+    )
+
+    st.info(
+        f"Training on **{len(train_images)} images** "
+        f"(+ {len(test_images)} validation images)."
+    )
+
+    use_gpu = core.use_gpu()
+    _ = io.logger_setup()
+
+    init_model = None if base_model == "scratch" else base_model
+    cell_model = models.CellposeModel(gpu=use_gpu, model_type=init_model)
+    model_name = f"{base_model}_finetuned.pt"
+
+    with st.spinner("Fine-tuning Cellpose…"):
+        new_path, train_losses, test_losses = train.train_seg(
+            cell_model.net,
+            train_data=train_images,
+            train_labels=train_masks,
+            test_data=test_images,
+            test_labels=test_masks,
+            channels=[0, 0],
+            n_epochs=epochs,
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+            SGD=True,
+            nimg_per_epoch=nimg_per_epoch,
+            model_name=model_name,
+            save_path=None,
+        )
+
+    # stash in session
+    buf = IO.BytesIO()
+    torch.save(cell_model.net.state_dict(), buf)
+    st.session_state["cellpose_model_bytes"] = buf.getvalue()
+    st.session_state["cellpose_model_name"] = model_name
+    st.session_state["model_to_fine_tune"] = base_model
+
+    return train_losses, test_losses, model_name
+
+
 # --- small helper: normalization similar to your earlier pipeline ---
 def _normalize_for_cellpose(image: np.ndarray) -> np.ndarray:
     im = image.astype(np.float32)
@@ -279,65 +333,3 @@ def compare_models_mean_iou_plot(
     plt.tight_layout()
     st.pyplot(fig, use_container_width=True)
     plt.close(fig)
-
-
-def finetune_cellpose_from_records(
-    recs: dict,
-):
-
-    images = [_normalize_for_cellpose(recs[k]["image"]) for k in recs.keys()]
-    masks = [recs[k]["masks"].astype("uint16") for k in recs.keys()]
-
-    train_images, test_images, train_masks, test_masks = train_test_split(
-        images, masks, test_size=0.2, random_state=42, shuffle=True
-    )
-
-    n_train_imgs, n_test_imgs = len(train_images), len(test_images)
-    n_train_masks = sum(np.max(m) for m in train_masks)
-    n_test_masks = sum(np.max(m) for m in test_masks)
-
-    st.info(
-        f"Training on **{n_train_imgs} images** with **{n_train_masks} masks** "
-        f"(+ {n_test_imgs} test images, {n_test_masks} masks)."
-    )
-
-    use_gpu = core.use_gpu()
-    channels = [0, 0]
-    _ = io.logger_setup()
-
-    init_model = st.session_state["model_to_fine_tune"]
-    if init_model == "scratch":
-        init_model = None
-    cell_model = models.CellposeModel(gpu=use_gpu, model_type=init_model)
-
-    if init_model == None:
-        init_model = "scratch"
-    model_name = f"{init_model}_finetuned.pt"
-
-    with st.spinner("Fine-tuning in progress…"):
-        new_path, train_losses, test_losses = train.train_seg(
-            cell_model.net,
-            train_data=train_images,
-            train_labels=train_masks,
-            test_data=test_images,
-            test_labels=test_masks,
-            channels=channels,
-            n_epochs=100,
-            learning_rate=0.00005,
-            weight_decay=0.1,
-            SGD=True,
-            nimg_per_epoch=32,
-            model_name=model_name,
-            save_path=None,
-        )
-
-    # also place into session state like the uploader expects
-
-    buf = IO.BytesIO()
-    torch.save(cell_model.net.state_dict(), buf)
-    st.session_state["cellpose_model_bytes"] = buf.getvalue()
-    st.session_state["cellpose_model_name"] = model_name
-
-    st.success("Fine-tuning complete ✅")
-
-    return train_losses, test_losses

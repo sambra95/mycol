@@ -9,7 +9,7 @@ from helpers.upload_download_functions import (
     load_npy_mask,
     load_tif_mask,
 )
-import os, tempfile, hashlib, io
+import os, tempfile, hashlib
 import numpy as np
 
 
@@ -24,10 +24,18 @@ def render_main():
         # ---- single uploader: images & masks ----
         st.subheader("Upload images & masks here")
 
-        up_key = f"u_all_np_{ss.get('uploader_nonce', 0)}"  # ensures clean on reload
+        # 👇 allow user to specify mask suffix (default "_masks")
+        mask_suffix = st.text_input(
+            "Mask file suffix (must match filenames before extension)",
+            value=ss.get("mask_suffix", "_masks"),
+            key="mask_suffix_input",
+        )
+        ss["mask_suffix"] = mask_suffix.strip() or "_masks"
+
+        up_key = f"u_all_np_{ss.get('uploader_nonce', 0)}"
         files = st.file_uploader(
-            "Upload images (.png/.jpg/.tif) and masks with '_masks' suffix (.tif)",
-            type=["tif", "tiff", "npy"],
+            f"Upload images (.png/.jpg/.tif) and masks with '{ss['mask_suffix']}' suffix (.tif/npy)",
+            type=["tif", "tiff", "npy", "png", "jpg", "jpeg"],
             accept_multiple_files=True,
             key=up_key,
         )
@@ -36,7 +44,8 @@ def render_main():
             if not files:
                 return
             # load the images first
-            imgs = [f for f in files if not stem(f.name).endswith("_masks")]
+            mask_suffix_len = len(mask_suffix)
+            imgs = [f for f in files if not stem(f.name).endswith(mask_suffix)]
             for f in imgs:
                 create_new_record_with_image(f)
             ok = ordered_keys()
@@ -44,11 +53,12 @@ def render_main():
                 set_current_by_index(len(ok) - 1)
 
             # then loads the masks (require prior image; match by stem without '_mask')
-            masks = [f for f in files if stem(f.name).endswith("_masks")]
+            masks = [f for f in files if stem(f.name).endswith(mask_suffix)]
             if masks and ss.images:
                 stem_to_key = {stem(rec["name"]): k for k, rec in ss.images.items()}
                 for f in masks:
-                    base = stem(f.name)[:-6]  # drop "_mask"
+
+                    base = stem(f.name)[:-mask_suffix_len]
                     k = stem_to_key.get(base)  # get the ID key
                     if k is None:  # skips if no mask
                         continue

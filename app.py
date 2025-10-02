@@ -99,26 +99,31 @@ with st.sidebar:
 
 # -------- Upload panel --------
 if panel == "Upload data":
+
     from panels import upload_panel
 
     upload_panel.render_main()
 
 elif panel == "Create and Edit Masks":
+
     from panels import mask_editing_panel
 
     mask_editing_panel.render_main(key_ns="edit")
 
 elif panel == "Classify Cells":
+
     from panels import classify_cells_panel
 
     classify_cells_panel.render_main(key_ns="classify")
 
 elif panel == "Cell Metrics":
+
     from panels import cell_metrics_panel
 
     cell_metrics_panel.render_main()
 
 elif panel == "Fine Tune Models":
+
     from panels import fine_tune_panel
 
     fine_tune_panel.render_cellpose_train_panel()

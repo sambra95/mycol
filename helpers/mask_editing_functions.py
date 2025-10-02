@@ -1,18 +1,11 @@
 import numpy as np
 from PIL import Image, ImageDraw
-import io
-from pathlib import Path
-from zipfile import ZipFile
-import numpy as np
-import tifffile as tiff
 import streamlit as st
 import torch
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 from contextlib import nullcontext
 from helpers import config as cfg  # CKPT_PATH, CFG_PATH
-import numpy as np
-from PIL import Image, ImageDraw
 from typing import Dict, Any
 from scipy import ndimage as ndi
 
@@ -30,18 +23,18 @@ def is_unique_box(box, boxes):
     return True
 
 
-def keep_largest_part(mask: np.ndarray) -> np.ndarray:
-    """Return only the largest connected component of a boolean mask."""
-    if not np.any(mask):
-        return np.zeros_like(mask, dtype=bool)
+# def keep_largest_part(mask: np.ndarray) -> np.ndarray:
+#     """Return only the largest connected component of a boolean mask."""
+#     if not np.any(mask):
+#         return np.zeros_like(mask, dtype=bool)
 
-    lab, n = ndi.label(mask)
-    if n == 1:
-        return mask.astype(bool)
+#     lab, n = ndi.label(mask)
+#     if n == 1:
+#         return mask.astype(bool)
 
-    sizes = np.bincount(lab.ravel())
-    sizes[0] = 0  # background
-    return lab == sizes.argmax()
+#     sizes = np.bincount(lab.ravel())
+#     sizes[0] = 0  # background
+#     return lab == sizes.argmax()
 
 
 def boxes_to_fabric_rects(boxes, scale=1.0) -> Dict[str, Any]:

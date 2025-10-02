@@ -1,8 +1,4 @@
 from pathlib import Path
-import numpy as np
-import streamlit as st
-from PIL import Image
-from .mask_editing_functions import _resize_mask_nearest
 import streamlit as st
 
 
@@ -61,32 +57,3 @@ def set_current_by_index(idx: int):
     if not ok:
         return
     st.session_state.current_key = ok[idx % len(ok)]
-
-
-# def set_masks(masks_u8: np.ndarray):
-#     cur = current()
-#     if cur is None:
-#         return
-#     m = (masks_u8 > 0).astype(np.uint8)
-#     cur["masks"].append(m)
-#     cur["labels"] = [True] * m.shape[0]
-
-
-# def add_drawn_mask(mask_u8: np.ndarray):
-#     cur = current()
-#     if cur is None:
-#         return
-#     H, W = cur["H"], cur["W"]
-#     if mask_u8.shape[:2] != (H, W):
-#         mask_u8 = _resize_mask_nearest(mask_u8, H, W)
-#     mask_u8 = (mask_u8 > 0).astype(np.uint8)[None, ...]
-#     cur["masks"] = cur["masks"].append(mask_u8)
-#     cur["labels"].append(None)
-
-
-# def delete_record(order_key: int):
-#     rec = st.session_state.images.pop(order_key, None)
-#     if rec:
-#         st.session_state.name_to_key.pop(rec["name"], None)
-#     ok = ordered_keys()
-#     st.session_state.current_key = ok[0] if ok else None

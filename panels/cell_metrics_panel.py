@@ -30,7 +30,9 @@ def render_sidebar():
         df["mask label"].unique(), key=lambda x: (x != "Unlabelled", str(x))
     )
     default_labels = st.session_state.get("analysis_labels", label_options)
-    default_labels = [l for l in default_labels if l in label_options] or label_options
+    default_labels = [
+        label for label in default_labels if label in label_options
+    ] or label_options
     st.multiselect(
         "Include labels",
         options=label_options,

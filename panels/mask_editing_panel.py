@@ -17,7 +17,6 @@ from helpers.mask_editing_functions import (
     draw_boxes_overlay,
     polygon_to_mask,
     composite_over_by_class,
-    get_class_palette,
     integrate_new_mask,
 )
 from helpers.classifying_functions import classes_map_from_labels, palette_from_emojis
@@ -129,7 +128,7 @@ def render_sidebar(*, key_ns: str = "side"):
                 rec.setdefault("labels", {})[int(new_id)] = rec["labels"].get(
                     int(new_id), None
                 )
-                added_any = True
+                # added_any = True
         rec["boxes"] = []
         st.session_state["pred_canvas_nonce"] = (
             st.session_state.get("pred_canvas_nonce", 0) + 1

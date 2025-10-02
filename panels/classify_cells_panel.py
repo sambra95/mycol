@@ -3,8 +3,6 @@ import numpy as np
 import streamlit as st
 from PIL import Image
 from streamlit_image_coordinates import streamlit_image_coordinates
-import pandas as pd
-import cv2
 
 # from helpers.densenet_functions import classify_rec_with_densenet_batched
 from helpers.mask_editing_functions import (
@@ -22,19 +20,6 @@ from helpers.classifying_functions import (
     remove_class_everywhere,
     _rename_class_from_input,
     _row,
-)
-
-
-# panels/classify_cells.py (sidebar only)
-
-import numpy as np
-import streamlit as st
-from PIL import Image
-import cv2
-
-from helpers.state_ops import ordered_keys, set_current_by_index, current
-from helpers.classifying_functions import (
-    _add_label_from_input,
 )
 
 # --- fixed class-color palette (RGB hex) ---

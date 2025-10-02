@@ -5,7 +5,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score
 from tensorflow.keras.callbacks import EarlyStopping
-from collections import Counter
 import pandas as pd
 
 # ---- bring in existing app helpers ----
@@ -22,7 +21,6 @@ from helpers.cellpose_functions import (
     _plot_losses,
     compare_models_mean_iou_plot,
 )
-
 
 ss = st.session_state
 

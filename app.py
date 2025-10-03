@@ -67,6 +67,7 @@ with st.sidebar:
             "Classify Cells",
             "Fine Tune Models",
             "Cell Metrics",
+            "Downloads",
         ],
         key="side_panel",
     )
@@ -91,6 +92,9 @@ with st.sidebar:
         cell_metrics_panel.render_sidebar()
 
     elif panel == "Fine Tune Models":
+        None
+
+    elif panel == "Downloads":
         None
 
 # ============================================================
@@ -128,3 +132,9 @@ elif panel == "Fine Tune Models":
 
     fine_tune_panel.render_cellpose_train_panel()
     fine_tune_panel.render_densenet_train_panel()
+
+elif panel == "Downloads":
+
+    from panels import download_panel
+
+    download_panel.render_main()

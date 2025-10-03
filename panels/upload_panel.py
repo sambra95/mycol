@@ -37,7 +37,7 @@ def render_main():
         )
 
         if files:
-            _process_uploads(files, rec, mask_suffix)
+            _process_uploads(files, mask_suffix)
             ss["uploader_nonce"] = ss.get("uploader_nonce", 0) + 1
             st.rerun()
 

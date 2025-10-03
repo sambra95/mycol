@@ -17,7 +17,7 @@ from helpers.state_ops import (
 ss = st.session_state
 
 
-def _process_uploads(files, rec, mask_suffix):
+def _process_uploads(files, mask_suffix):
     if not files:
         return
     # load the images first

@@ -2,32 +2,13 @@ import numpy as np
 import streamlit as st
 import pandas as pd
 import seaborn as sns
+import matplotlib.pyplot as plt
 import io
-
-from pathlib import Path
 from helpers.state_ops import ordered_keys
-from skimage.measure import regionprops, label
-
-
-def _stem(n):
-    return Path(n).stem
-
-
-def _perimeter_px(mm: np.ndarray) -> int:
-    mb = mm.astype(bool)
-    interior = (
-        mb
-        & np.roll(mb, 1, 0)
-        & np.roll(mb, -1, 0)
-        & np.roll(mb, 1, 1)
-        & np.roll(mb, -1, 1)
-    )
-    edge = mb & ~interior
-    return int(edge.sum())
+from skimage.measure import regionprops
 
 
 def _violin(df: pd.DataFrame, value_col: str):
-    import seaborn as sns, matplotlib.pyplot as plt
 
     sub = df.copy()
     sub["label"] = sub["mask label"].replace("Remove label", None).fillna("Unlabelled")

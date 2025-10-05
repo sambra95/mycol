@@ -16,6 +16,7 @@ from scipy import ndimage as ndi
 
 
 def is_unique_box(box, boxes):
+    """checks that the box doesnt already exist. avoids duplicate mask predictions"""
     x0, y0, x1, y1 = box
     for b in boxes:
         if b == (x0, y0, x1, y1):
@@ -23,21 +24,8 @@ def is_unique_box(box, boxes):
     return True
 
 
-# def keep_largest_part(mask: np.ndarray) -> np.ndarray:
-#     """Return only the largest connected component of a boolean mask."""
-#     if not np.any(mask):
-#         return np.zeros_like(mask, dtype=bool)
-
-#     lab, n = ndi.label(mask)
-#     if n == 1:
-#         return mask.astype(bool)
-
-#     sizes = np.bincount(lab.ravel())
-#     sizes[0] = 0  # background
-#     return lab == sizes.argmax()
-
-
 def boxes_to_fabric_rects(boxes, scale=1.0) -> Dict[str, Any]:
+    """draw box for mask predictions on canvas rendering"""
     rects = []
     for x0, y0, x1, y1 in boxes:
         rects.append(
@@ -62,6 +50,7 @@ def boxes_to_fabric_rects(boxes, scale=1.0) -> Dict[str, Any]:
 
 
 def draw_boxes_overlay(image_u8, boxes, alpha=0.25, outline_px=2):
+    """render the draw boxes in front of the image"""
     base = Image.fromarray(image_u8).convert("RGBA")
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(overlay)
@@ -79,6 +68,7 @@ def draw_boxes_overlay(image_u8, boxes, alpha=0.25, outline_px=2):
 
 
 def _resize_mask_nearest(mask_u8, out_h, out_w):
+    """research masks to match image scaling"""
     return np.array(
         Image.fromarray(mask_u8).resize((out_w, out_h), resample=Image.NEAREST),
         dtype=np.uint8,
@@ -86,6 +76,7 @@ def _resize_mask_nearest(mask_u8, out_h, out_w):
 
 
 def polygon_to_mask(obj, h, w):
+    """drawing function for adding masks by freehand drawing on rendered canvas"""
     mask_img = Image.new("L", (w, h), 0)
     draw = ImageDraw.Draw(mask_img)
     pts = []
@@ -101,53 +92,8 @@ def polygon_to_mask(obj, h, w):
     return np.array(mask_img, dtype=np.uint8)
 
 
-def composite_over(image_u8, masks_u8, alpha=0.5):
-    H, W = image_u8.shape[:2]
-    m = np.asarray(masks_u8)
-
-    # Coerce to (N,H,W) WITHOUT transpose guesses
-    if m.ndim == 2:
-        m = m[None, ...]
-    elif m.ndim == 3:
-        if m.shape[-1] in (1, 3) and m.shape[:2] == (H, W):
-            m = m[..., 0][None, ...]
-    elif m.ndim == 4:
-        if m.shape[-1] in (1, 3):
-            m = m[..., 0]
-        elif m.shape[1] in (1, 3):
-            m = m[:, 0, ...]
-
-    if m.ndim == 2:
-        m = m[None, ...]
-    if m.shape[-2:] != (H, W):
-        m = np.stack([_resize_mask_nearest(mi.astype(np.uint8), H, W) for mi in m], 0)
-
-    masks = (m > 0).astype(np.uint8)
-    N = masks.shape[0]
-
-    out = image_u8.astype(np.float32) / 255.0
-    red = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-
-    for i in range(N):  # no active filtering; draw all remaining masks
-        mi = (masks[i] > 0).astype(np.float32)
-        a = (mi * alpha)[..., None]
-        out = out * (1 - a) + red[None, None, :] * a
-
-        mb = mi.astype(bool)
-        interior = (
-            mb
-            & np.roll(mb, 1, 0)
-            & np.roll(mb, -1, 0)
-            & np.roll(mb, 1, 1)
-            & np.roll(mb, -1, 1)
-        )
-        edge = mb & ~interior
-        out[edge] = 1.0
-
-    return (np.clip(out, 0, 1) * 255).astype(np.uint8)
-
-
 def _prep_for_sam(img: np.ndarray) -> np.ndarray:
+    """preprocess image into correct format for mask prediction with sam2"""
     a = img
     if a.ndim == 2:
         a = np.repeat(a[..., None], 3, axis=2)
@@ -161,7 +107,8 @@ def _prep_for_sam(img: np.ndarray) -> np.ndarray:
 
 
 def _run_sam2_on_boxes(cur: dict):
-    """Return a list of (H,W) boolean masks — best mask per box."""
+    """input is record for prediction. boxes to guide prediction will be extracted wtih "boxes" key.
+    Return a list of (H,W) boolean masks (best mask per box."""
     boxes = np.asarray(cur.get("boxes", []), dtype=np.float32)
     if boxes.size == 0:
         st.info("No boxes drawn yet.")
@@ -227,7 +174,7 @@ def _run_sam2_on_boxes(cur: dict):
                 dtype=bool,
             )
         out.append(mi)
-    return out
+    return out  # list of boalean mask (best mask for each box)
 
 
 # masks can be cut when adding them to the existing array (new masks lose priority).
@@ -282,58 +229,6 @@ def integrate_new_mask(original: np.ndarray, new_binary: np.ndarray):
     out[mask_new] = new_id  # reapply only largest part
 
     return out, new_id
-
-
-def stack_to_instances_binary_first(m: np.ndarray) -> np.ndarray:
-    """
-    Robust stack (N,H,W,[...]) -> instance labels (H,W) uint16.
-    - Treats >0 as 1
-    - Resolves overlaps by descending area (largest wins), matching your UI behavior.
-    """
-    m = np.asarray(m)
-    if m.ndim == 4 and m.shape[-1] in (1, 3):
-        m = m[..., 0]
-    if m.ndim == 3 and m.shape[-1] in (1, 3):  # (H,W,1) sneaking in as 'stack'
-        m = m[..., 0][None, ...]
-    if m.ndim == 2:
-        m = m[None, ...]
-    bin_stack = (m > 0).astype(np.uint8)
-
-    N, H, W = bin_stack.shape
-    areas = bin_stack.reshape(N, -1).sum(axis=1)
-    order = np.argsort(-areas)  # largest first
-
-    inst = np.zeros((H, W), dtype=np.uint16)
-    curr_id = 1
-    for ch in order:
-        mm = bin_stack[ch] > 0
-        if mm.sum() == 0:
-            continue
-        write_here = mm & (inst == 0)
-        if write_here.any():
-            inst[write_here] = curr_id
-            curr_id += 1
-    return inst
-
-
-def get_class_palette(labels, *, ss_key="class_colors"):
-    """Persistent {class -> RGB float tuple} in session_state."""
-
-    base = [
-        (0.90, 0.10, 0.10),
-        (0.10, 0.60, 0.95),
-        (0.10, 0.75, 0.25),
-        (0.95, 0.70, 0.10),
-        (0.55, 0.10, 0.80),
-        (0.05, 0.80, 0.70),
-        (0.85, 0.30, 0.30),
-        (0.30, 0.85, 0.30),
-    ]
-    pal = st.session_state.setdefault(ss_key, {})
-    for i, c in enumerate(labels):
-        pal.setdefault(c, base[i % len(base)])
-    pal.setdefault("__unlabeled__", (0.95, 0.95, 0.95))  # light gray
-    return pal
 
 
 def composite_over_by_class(image_u8, label_inst, classes_map, palette, alpha=0.5):

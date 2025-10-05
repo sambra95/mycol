@@ -18,7 +18,7 @@ def ensure_global_state() -> None:
     ss.setdefault("densenet_ckpt_name", None)
     ss.setdefault("side_new_label", "")
     ss.setdefault("show_overlay", True)
-    ss.setdefault("interaction_mode", "Draw box")
+    ss.setdefault("interaction_mode", "Remove mask")
     ss.setdefault("side_interaction_mode", "Draw box")
 
     # cellpose model training defaults
@@ -36,11 +36,6 @@ def ensure_global_state() -> None:
 
 def stem(p: str) -> str:
     return Path(p).stem
-
-
-# def image_key(uploaded_file) -> str:
-#     b = uploaded_file.getvalue()
-#     return f"{uploaded_file.name}:{len(b)}"
 
 
 def ordered_keys():

@@ -8,7 +8,7 @@ import cv2
 from skimage.exposure import rescale_intensity
 import matplotlib.pyplot as plt
 
-import tensorflow as tf
+from tensorflow.keras.utils import Sequence
 from tensorflow.keras import layers, models
 from tensorflow.keras.applications import DenseNet121
 from tensorflow.keras.optimizers import Adam
@@ -17,7 +17,95 @@ from tensorflow.keras.optimizers import Adam
 from helpers.state_ops import ordered_keys
 from helpers.classifying_functions import extract_masked_cell_patch
 
-# --- Drop-in replacements for the 'augment' package ---
+ss = st.session_state
+
+# -------------------------------
+#  Preprocessing helpers
+# -------------------------------
+
+
+def normalize_image(image: np.ndarray) -> np.ndarray:
+    """
+    Cellpose-like normalization:
+      - divide by mean intensity (scale to ~0.5 mean)
+      - rescale to [0, 1]
+    """
+    im = image.astype(np.float32)
+    mean_val = float(np.mean(im))
+    if mean_val == 0:
+        # fall back to simple scaling to avoid crashing a training run
+        return (im - im.min()) / max(1e-6, (im.max() - im.min()))
+    meannorm = im * (0.5 / mean_val)
+    return rescale_intensity(meannorm, in_range="image", out_range=(0, 1))
+
+
+def resize_with_aspect_ratio(img, target_size=64):
+    """resize input image to square with target_size dimensions. maintains aspect ratio"""
+    h, w = img.shape[:2]
+    scale = target_size / max(h, w)
+    new_w, new_h = int(w * scale), int(h * scale)
+    resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    # create square canvas
+    canvas = np.zeros(
+        (target_size, target_size, *([img.shape[2]] if img.ndim == 3 else [])),
+        dtype=img.dtype,
+    )
+    y0 = (target_size - new_h) // 2
+    x0 = (target_size - new_w) // 2
+    canvas[y0 : y0 + new_h, x0 : x0 + new_w] = resized
+    return canvas
+
+
+def _resize_keep_aspect(img: np.ndarray, target=(64, 64)) -> np.ndarray:
+    th, tw = target
+    h, w = img.shape[:2]
+    if h == 0 or w == 0:
+        return np.zeros((th, tw, img.shape[2] if img.ndim == 3 else 1), dtype=img.dtype)
+    scale = min(th / h, tw / w)
+    nw, nh = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
+    resized = cv2.resize(
+        img, (nw, nh), interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+    )
+    # center pad
+    if img.ndim == 2:
+        canvas = np.zeros((th, tw), dtype=img.dtype)
+        y0, x0 = (th - nh) // 2, (tw - nw) // 2
+        canvas[y0 : y0 + nh, x0 : x0 + nw] = resized
+        return canvas
+    else:
+        c = img.shape[2]
+        canvas = np.zeros((th, tw, c), dtype=img.dtype)
+        y0, x0 = (th - nh) // 2, (tw - nw) // 2
+        canvas[y0 : y0 + nh, x0 : x0 + nw, :] = resized
+        return canvas
+
+
+def preprocess_patch_for_training(crop: np.ndarray, target=(64, 64)) -> np.ndarray:
+    """
+    - ensure 3-ch RGB
+    - keep aspect ratio with padding to target
+    - normalize to [0,1] via normalize_image
+    - return float32
+    """
+    if crop.ndim == 2:
+        crop3 = np.stack([crop] * 3, axis=-1)
+    elif crop.ndim == 3 and crop.shape[2] == 4:
+        crop3 = cv2.cvtColor(crop, cv2.COLOR_RGBA2RGB)
+    elif crop.ndim == 3 and crop.shape[2] == 3:
+        # assume BGR if from cv; convert to RGB for consistency in augmentation
+        crop3 = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+    else:
+        crop3 = crop[..., :3]
+
+    sq = _resize_keep_aspect(crop3, target)
+    sq = normalize_image(sq)  # 0..1 float
+    return sq.astype(np.float32)
+
+
+# -------------------------------
+#  Augementation functions
+# -------------------------------
 
 
 def geo_rotate(img, angle: int, keep_resolution: bool = True):
@@ -86,13 +174,6 @@ def photo_bc(img, alpha: float = 1.0, beta: float = 0.0):
     return out
 
 
-ss = st.session_state
-
-# -------------------------------
-#  Augmentation pipeline (UNCHANGED)
-# -------------------------------
-
-
 def random_flip(img):
     flip_type = random.choice(["horizontal", "vertical"])
     return np.fliplr(img) if flip_type == "horizontal" else np.flipud(img)
@@ -133,72 +214,6 @@ def random_augmentation_pipeline(image_np, num_transforms=3):
     for t in selected:
         out = t(out)
     return out
-
-
-# -------------------------------
-#  Preprocessing helpers
-# -------------------------------
-
-
-def normalize_image(image: np.ndarray) -> np.ndarray:
-    """
-    Cellpose-like normalization:
-      - divide by mean intensity (scale to ~0.5 mean)
-      - rescale to [0, 1]
-    """
-    im = image.astype(np.float32)
-    mean_val = float(np.mean(im))
-    if mean_val == 0:
-        # fall back to simple scaling to avoid crashing a training run
-        return (im - im.min()) / max(1e-6, (im.max() - im.min()))
-    meannorm = im * (0.5 / mean_val)
-    return rescale_intensity(meannorm, in_range="image", out_range=(0, 1))
-
-
-def _resize_keep_aspect(img: np.ndarray, target=(64, 64)) -> np.ndarray:
-    th, tw = target
-    h, w = img.shape[:2]
-    if h == 0 or w == 0:
-        return np.zeros((th, tw, img.shape[2] if img.ndim == 3 else 1), dtype=img.dtype)
-    scale = min(th / h, tw / w)
-    nw, nh = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
-    resized = cv2.resize(
-        img, (nw, nh), interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
-    )
-    # center pad
-    if img.ndim == 2:
-        canvas = np.zeros((th, tw), dtype=img.dtype)
-        y0, x0 = (th - nh) // 2, (tw - nw) // 2
-        canvas[y0 : y0 + nh, x0 : x0 + nw] = resized
-        return canvas
-    else:
-        c = img.shape[2]
-        canvas = np.zeros((th, tw, c), dtype=img.dtype)
-        y0, x0 = (th - nh) // 2, (tw - nw) // 2
-        canvas[y0 : y0 + nh, x0 : x0 + nw, :] = resized
-        return canvas
-
-
-def preprocess_patch_for_training(crop: np.ndarray, target=(64, 64)) -> np.ndarray:
-    """
-    - ensure 3-ch RGB
-    - keep aspect ratio with padding to target
-    - normalize to [0,1] via normalize_image
-    - return float32
-    """
-    if crop.ndim == 2:
-        crop3 = np.stack([crop] * 3, axis=-1)
-    elif crop.ndim == 3 and crop.shape[2] == 4:
-        crop3 = cv2.cvtColor(crop, cv2.COLOR_RGBA2RGB)
-    elif crop.ndim == 3 and crop.shape[2] == 3:
-        # assume BGR if from cv; convert to RGB for consistency in augmentation
-        crop3 = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-    else:
-        crop3 = crop[..., :3]
-
-    sq = _resize_keep_aspect(crop3, target)
-    sq = normalize_image(sq)  # 0..1 float
-    return sq.astype(np.float32)
 
 
 # -------------------------------
@@ -287,11 +302,11 @@ def load_patches_from_session(target=(64, 64)):
 
 
 # -------------------------------
-#  Keras Sequence with your augmentation pipeline
+#  Keras Sequence with augmentation pipeline
 # -------------------------------
 
 
-class AugSequence(tf.keras.utils.Sequence):
+class AugSequence(Sequence):
     def __init__(
         self, X, y, batch_size=32, num_transforms=3, shuffle=True, target_size=None
     ):
@@ -340,23 +355,6 @@ class AugSequence(tf.keras.utils.Sequence):
 
         Xo = np.stack(out, axis=0)
         return Xo, yb
-
-
-def resize_with_aspect_ratio(img, target_size=64):
-    h, w = img.shape[:2]
-    scale = target_size / max(h, w)
-    new_w, new_h = int(w * scale), int(h * scale)
-    resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
-    # create square canvas
-    canvas = np.zeros(
-        (target_size, target_size, *([img.shape[2]] if img.ndim == 3 else [])),
-        dtype=img.dtype,
-    )
-    y0 = (target_size - new_h) // 2
-    x0 = (target_size - new_w) // 2
-    canvas[y0 : y0 + new_h, x0 : x0 + new_w] = resized
-    return canvas
 
 
 def load_labeled_patches_from_session(patch_size: int = 64):
@@ -409,6 +407,11 @@ def load_labeled_patches_from_session(patch_size: int = 64):
     X = np.stack(X, axis=0)
     y = np.array(y, dtype=np.int64)
     return X, y, all_classes
+
+
+# -------------------------------
+#  Functions for plotting training metrics
+# -------------------------------
 
 
 def _plot_confusion_matrix(

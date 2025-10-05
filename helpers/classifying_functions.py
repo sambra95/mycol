@@ -13,8 +13,6 @@ from skimage.exposure import rescale_intensity
 
 from helpers.state_ops import ordered_keys
 
-from helpers.mask_editing_functions import stack_to_instances_binary_first
-
 ss = st.session_state
 
 PALETTE_HEX = [
@@ -247,19 +245,6 @@ def _stem(name: str) -> str:
     return Path(name).stem
 
 
-def _to_square_patch(rgb: np.ndarray, patch_size: int = 256) -> np.ndarray:
-    h, w = rgb.shape[:2]
-    if h == 0 or w == 0:
-        return np.zeros((patch_size, patch_size, 3), dtype=np.uint8)
-    s = patch_size / max(h, w)
-    nw, nh = max(1, int(round(w * s))), max(1, int(round(h * s)))
-    resized = np.array(Image.fromarray(rgb).resize((nw, nh), Image.BILINEAR))
-    canvas = np.zeros((patch_size, patch_size, 3), dtype=np.uint8)
-    y0, x0 = (patch_size - nh) // 2, (patch_size - nw) // 2
-    canvas[y0 : y0 + nh, x0 : x0 + nw] = resized
-    return canvas
-
-
 def extract_masked_cell_patch(
     image: np.ndarray, mask: np.ndarray, size: int | tuple[int, int] = 64
 ):
@@ -440,3 +425,35 @@ def classify_cells_with_densenet(rec: dict) -> None:
 
     # Persist updated record and rerun UI
     ss.images[ss.current_key] = rec
+
+
+def stack_to_instances_binary_first(m: np.ndarray) -> np.ndarray:
+    """
+    Robust stack (N,H,W,[...]) -> instance labels (H,W) uint16.
+    - Treats >0 as 1
+    - Resolves overlaps by descending area (largest wins), matching your UI behavior.
+    """
+    m = np.asarray(m)
+    if m.ndim == 4 and m.shape[-1] in (1, 3):
+        m = m[..., 0]
+    if m.ndim == 3 and m.shape[-1] in (1, 3):  # (H,W,1) sneaking in as 'stack'
+        m = m[..., 0][None, ...]
+    if m.ndim == 2:
+        m = m[None, ...]
+    bin_stack = (m > 0).astype(np.uint8)
+
+    N, H, W = bin_stack.shape
+    areas = bin_stack.reshape(N, -1).sum(axis=1)
+    order = np.argsort(-areas)  # largest first
+
+    inst = np.zeros((H, W), dtype=np.uint16)
+    curr_id = 1
+    for ch in order:
+        mm = bin_stack[ch] > 0
+        if mm.sum() == 0:
+            continue
+        write_here = mm & (inst == 0)
+        if write_here.any():
+            inst[write_here] = curr_id
+            curr_id += 1
+    return inst

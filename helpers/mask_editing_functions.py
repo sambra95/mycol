@@ -67,14 +67,6 @@ def draw_boxes_overlay(image_u8, boxes, alpha=0.25, outline_px=2):
 # ============================================================
 
 
-def _resize_mask_nearest(mask_u8, out_h, out_w):
-    """research masks to match image scaling"""
-    return np.array(
-        Image.fromarray(mask_u8).resize((out_w, out_h), resample=Image.NEAREST),
-        dtype=np.uint8,
-    )
-
-
 def polygon_to_mask(obj, h, w):
     """drawing function for adding masks by freehand drawing on rendered canvas"""
     mask_img = Image.new("L", (w, h), 0)

@@ -4,11 +4,9 @@ import streamlit as st
 from PIL import Image
 from streamlit_drawable_canvas import st_canvas
 from streamlit_image_coordinates import streamlit_image_coordinates
+
 from helpers.upload_download_functions import zip_all_masks
-from helpers.cellpose_functions import (
-    _has_cellpose_model,
-    segment_rec_with_cellpose,
-)
+from helpers.cellpose_functions import _has_cellpose_model, segment_rec_with_cellpose
 from helpers.state_ops import ordered_keys, set_current_by_index, current
 from helpers.mask_editing_functions import (
     _run_sam2_on_boxes,
@@ -22,19 +20,51 @@ from helpers.mask_editing_functions import (
 from helpers.classifying_functions import classes_map_from_labels, palette_from_emojis
 
 
-def render_sidebar(*, key_ns: str = "side"):
-    """
-    Renders the sidebar controls for 'Create and Edit Masks'.
-    """
+# ---------- Small utilities ----------
 
+
+def _ensure_nonces():
+    st.session_state.setdefault("edit_canvas_nonce", 0)
+    st.session_state.setdefault("pred_canvas_nonce", 0)
+    st.session_state.setdefault("side_interaction_mode", "Draw box")
+
+
+# --- replace your _image_display with this ---
+def _image_display(rec, scale):
+    disp_w, disp_h = int(rec["W"] * scale), int(rec["H"] * scale)
+
+    M = rec.get("masks")
+    has_instances = isinstance(M, np.ndarray) and M.ndim == 2 and M.any()
+
+    if st.session_state.get("show_overlay", False) and has_instances:
+        labels = st.session_state.setdefault("all_classes", ["Remove label"])
+        palette = palette_from_emojis(labels)
+        classes_map = classes_map_from_labels(rec["masks"], rec["labels"])
+        base_img = composite_over_by_class(
+            rec["image"], rec["masks"], classes_map, palette, alpha=0.35
+        )
+    else:
+        base_img = rec["image"]  # need unaltered image to draw boxes on
+
+    display_for_ui = np.array(
+        Image.fromarray(base_img.astype(np.uint8)).resize(
+            (disp_w, disp_h), Image.BILINEAR
+        )
+    )
+    return base_img, display_for_ui, disp_w, disp_h
+
+
+# ---------- Sidebar: navigation ----------
+
+
+# @st.fragment
+def nav_fragment(key_ns="side"):
     ok = ordered_keys()
     if not ok:
         st.warning("Upload an image in **Upload data** first.")
-        # read from state so caller can no-op safely
+        return
 
-    # ⬇️ get the current record (this was missing)
     rec = current()
-
     names = [st.session_state.images[k]["name"] for k in ok]
     reck = st.session_state.current_key
     rec_idx = ok.index(reck) if reck in ok else 0
@@ -43,26 +73,38 @@ def render_sidebar(*, key_ns: str = "side"):
     c1, c2 = st.columns(2)
     if c1.button("◀ Prev", key=f"{key_ns}_prev", use_container_width=True):
         set_current_by_index(rec_idx - 1)
-        st.rerun()
+        # st.rerun()
     if c2.button("Next ▶", key=f"{key_ns}_next", use_container_width=True):
         set_current_by_index(rec_idx + 1)
-        st.rerun()
+        # st.rerun()
 
     st.toggle("Show mask overlay", key="show_overlay", value=True)
 
-    st.divider()
 
-    st.markdown("### Create and edit cell masks:")
+# ---------- Sidebar: interaction mode ----------
 
-    st.radio(
+
+@st.fragment
+def interaction_mode_fragment(ns="side"):
+    # set a default BEFORE the widget is created
+    st.session_state.setdefault(f"{ns}_interaction_mode", "Draw box")
+
+    mode = st.radio(
         "Select action to perform:",
         ["Draw box", "Remove box", "Draw mask", "Remove mask"],
-        key=f"{key_ns}_interaction_mode",
+        key=f"{ns}_interaction_mode",
         horizontal=True,
     )
+    st.caption(f"Mode: {mode}")
 
-    # segment current image
-    if st.button(
+
+# ---------- Sidebar: Cellpose actions ----------
+
+
+@st.fragment
+def cellpose_actions_fragment():
+    # Segment current
+    st.button(
         "Segment current image with Cellpose",
         key="btn_segment_cellpose",
         disabled=not _has_cellpose_model(),
@@ -72,11 +114,11 @@ def render_sidebar(*, key_ns: str = "side"):
             if _has_cellpose_model()
             else "Upload model"
         ),
-    ):
-        segment_rec_with_cellpose(current())
+        on_click=_segment_current_and_refresh,
+    )
 
-    # batch segment all images
-    if st.button(
+    # Batch segment all
+    st.button(
         "Batch segment all images with Cellpose",
         key="btn_batch_segment_cellpose",
         disabled=not _has_cellpose_model(),
@@ -86,37 +128,52 @@ def render_sidebar(*, key_ns: str = "side"):
             if _has_cellpose_model()
             else "Upload model"
         ),
-    ):
-        n = len(ordered_keys())
-        pb = st.progress(0.0, text="Starting…")
-        for i, k in enumerate(ordered_keys(), 1):
-            segment_rec_with_cellpose(st.session_state.images.get(k))
-            pb.progress(i / n, text=f"Segmented {i}/{n}")
-        pb.empty()
+        on_click=_batch_segment_and_refresh,
+    )
 
-    # --- Box utilities
-    # --- boxes are used to guide cell mask predictions from SAM2
+
+def _segment_current_and_refresh():
+    rec = current()
+    if rec is not None:
+        segment_rec_with_cellpose(rec)
+        st.session_state["edit_canvas_nonce"] += 1
+    st.rerun()
+
+
+def _batch_segment_and_refresh():
+    ok = ordered_keys()
+    if not ok:
+        return
+    n = len(ok)
+    pb = st.progress(0.0, text="Starting…")
+    for i, k in enumerate(ok, 1):
+        segment_rec_with_cellpose(st.session_state.images.get(k))
+        pb.progress(i / n, text=f"Segmented {i}/{n}")
+    pb.empty()
+    st.session_state["edit_canvas_nonce"] += 1
+    st.rerun()
+
+
+# ---------- Sidebar: Box utilities ----------
+
+
+@st.fragment
+def box_tools_fragment(key_ns="side"):
+    rec = current()
     row = st.container()
     c1, c2, c3 = row.columns([1, 1, 1])
 
-    # resets the boxes list of the record to an empty list
     if c1.button("Clear boxes", use_container_width=True, key=f"{key_ns}_clear_boxes"):
         rec["boxes"] = []
-        st.session_state["pred_canvas_nonce"] = (
-            st.session_state.get("pred_canvas_nonce", 0) + 1
-        )
+        st.session_state["pred_canvas_nonce"] += 1
         st.rerun()
 
-    # removes the last bix from the box list of the record
     if c2.button("Remove last box", use_container_width=True, key=f"{key_ns}_undo_box"):
         if rec["boxes"]:
             rec["boxes"].pop()
-            st.session_state["pred_canvas_nonce"] = (
-                st.session_state.get("pred_canvas_nonce", 0) + 1
-            )
+            st.session_state["pred_canvas_nonce"] += 1
             st.rerun()
 
-    # masks are predicted for any boxes displayed on the image
     if c3.button(
         "Predict masks in boxes", use_container_width=True, key=f"{key_ns}_predict"
     ):
@@ -128,25 +185,28 @@ def render_sidebar(*, key_ns: str = "side"):
                 rec.setdefault("labels", {})[int(new_id)] = rec["labels"].get(
                     int(new_id), None
                 )
-                # added_any = True
         rec["boxes"] = []
-        st.session_state["pred_canvas_nonce"] = (
-            st.session_state.get("pred_canvas_nonce", 0) + 1
-        )
+        st.session_state["pred_canvas_nonce"] += 1
+        st.session_state["edit_canvas_nonce"] += 1
         st.rerun()
 
-    # --- Mask utilities
+
+# ---------- Sidebar: Mask utilities ----------
+
+
+@st.fragment
+def mask_tools_fragment(key_ns="side"):
+    rec = current()
     row2 = st.container()
     c4, c5 = row2.columns([1, 1])
 
-    # Remove all masks from the record
     if c4.button("Clear masks", use_container_width=True, key=f"{key_ns}_clear_masks"):
         rec["masks"] = np.zeros((rec["H"], rec["W"]), dtype=np.uint16)
         rec["labels"] = {}
         rec["last_click_xy"] = None
+        st.session_state["edit_canvas_nonce"] += 1
         st.rerun()
 
-    # remove the last added mask from the list
     if c5.button(
         "Remove last mask", use_container_width=True, key=f"{key_ns}_undo_mask"
     ):
@@ -154,18 +214,24 @@ def render_sidebar(*, key_ns: str = "side"):
         if max_id > 0:
             rec["masks"][rec["masks"] == max_id] = 0
             rec.setdefault("labels", {}).pop(max_id, None)
-
-        st.session_state["pred_canvas_nonce"] = (
-            st.session_state.get("pred_canvas_nonce", 0) + 1
-        )
+        st.session_state["pred_canvas_nonce"] += 1
+        st.session_state["edit_canvas_nonce"] += 1
         st.rerun()
 
-    # Download
 
-    downloadable = any(
-        getattr(rec["masks"], "size", 0) > 0 for rec in st.session_state.images.values()
+# ---------- Sidebar: Download (light) ----------
+
+
+@st.fragment
+def download_fragment(key_ns="side"):
+    ok = ordered_keys()
+    imgs = st.session_state.images if "images" in st.session_state else {}
+    downloadable = (
+        any(getattr(r["masks"], "size", 0) > 0 for r in imgs.values())
+        if imgs
+        else False
     )
-    data_bytes = zip_all_masks(st.session_state.images, ok) if downloadable else b""
+    data_bytes = zip_all_masks(imgs, ok) if downloadable else b""
     st.download_button(
         "Download all masks (.zip)",
         data=data_bytes,
@@ -177,47 +243,23 @@ def render_sidebar(*, key_ns: str = "side"):
     )
 
 
-def render_main(
-    *,
-    key_ns: str = "edit",
-):
-    """
-    Render the Create/Edit Masks UI for the current image record.
-    Required:
-      rec          : image record dict (from st.session_state.images[...])
-      mode         : one of ["Draw mask","Remove mask","Draw box","Remove box"]
-    Optional:
-      scale        : float (display scaling)
-      key_ns       : widget key namespace to avoid collisions
-    """
+# ---------- Main: display + interaction canvas ----------
+
+
+@st.fragment
+def display_and_interact_fragment(key_ns="edit", mode_ns="side", scale=1.5):
+    _ensure_nonces()
     rec = current()
     if rec is None:
         st.warning("Upload an image in **Upload data** first.")
+        return
 
-    scale = (
-        1.5  # hard coded scaling factor so that images show nicely on my laptop screen
-    )
-    disp_w, disp_h = int(rec["W"] * scale), int(rec["H"] * scale)
+    base_img, display_for_ui, disp_w, disp_h = _image_display(rec, scale)
+    mode = st.session_state.get(f"{mode_ns}_interaction_mode", "Draw box")
 
-    labels = st.session_state.setdefault("all_classes", ["Remove label"])
-    palette = palette_from_emojis(labels)
-    classes_map = classes_map_from_labels(rec["masks"], rec["labels"])
-    display_img = composite_over_by_class(
-        rec["image"], rec["masks"], classes_map, palette, alpha=0.35
-    )
-
-    # PIL safety: ensure uint8 RGB before resizing (won't work for uint16)
-    display_for_ui = np.array(
-        Image.fromarray(display_img.astype(np.uint8)).resize(
-            (disp_w, disp_h), Image.BILINEAR
-        )
-    )
-
-    # ensure nonces exist locally to avoid KeyErrors when called from this module
-    # ? Where is this set interactively? which widget has that key?
-    if st.session_state["side_interaction_mode"] == "Draw mask":
+    # ---- Draw mask
+    if mode == "Draw mask":
         bg = Image.fromarray(display_for_ui).convert("RGBA")
-
         canvas_result = st_canvas(
             fill_color="rgba(0, 0, 255, 0.30)",
             stroke_width=2,
@@ -232,19 +274,14 @@ def render_main(
             initial_drawing=None,
             key=f"{key_ns}_canvas_edit_{st.session_state['edit_canvas_nonce']}",
         )
-
         if canvas_result.json_data:
             added_any = False
             for obj in canvas_result.json_data.get("objects", []):
-                if obj.get("type") not in ("path", "polygon"):
+                if obj.get("type") not in ("path", "polygon"):  # guard
                     continue
-
-                # 1) display-size raster
-                mask_disp = polygon_to_mask(obj, disp_h, disp_w).astype(
-                    np.uint16
-                )  # (disp_h,disp_w) in {0,1}
-
-                # 2) resize to full resolution (nearest keeps labels crisp)
+                # 1) display-size mask
+                mask_disp = polygon_to_mask(obj, disp_h, disp_w).astype(np.uint16)
+                # 2) back to full res
                 mask_full = (
                     np.array(
                         Image.fromarray(mask_disp).resize(
@@ -253,9 +290,7 @@ def render_main(
                         dtype=np.uint16,
                     )
                     > 0
-                )  # (H,W) bool
-
-                # 3) integrate into label image
+                )
                 inst, new_id = integrate_new_mask(rec["masks"], mask_full)
                 if new_id is not None:
                     rec["masks"] = inst
@@ -263,16 +298,15 @@ def render_main(
                         int(new_id), None
                     )
                     added_any = True
-
             if added_any:
                 st.session_state["edit_canvas_nonce"] += 1
                 st.rerun()
 
-    elif st.session_state["side_interaction_mode"] == "Draw box":
-        bg = Image.fromarray(display_for_ui).convert("RGBA")
+    # ---- Draw box
+    elif mode == "Draw box":
+        bg = Image.fromarray(display_for_ui).convert("RGB")
         initial_json = boxes_to_fabric_rects(rec["boxes"], scale=scale)
         num_initial = len(initial_json.get("objects", []))
-
         canvas_result = st_canvas(
             fill_color="rgba(0, 0, 255, 0.25)",
             stroke_width=2,
@@ -287,7 +321,6 @@ def render_main(
             initial_drawing=initial_json,
             key=f"{key_ns}_canvas_pred_{st.session_state['pred_canvas_nonce']}",
         )
-
         if canvas_result.json_data:
             objs = canvas_result.json_data.get("objects", [])
             added_any = False
@@ -298,13 +331,11 @@ def render_main(
                 top = float(obj.get("top", 0))
                 width = float(obj.get("width", 0)) * float(obj.get("scaleX", 1.0))
                 height = float(obj.get("height", 0)) * float(obj.get("scaleY", 1.0))
-
                 # map from display to image coords
                 x0 = int(round(left / scale))
                 y0 = int(round(top / scale))
                 x1 = int(round((left + width) / scale))
                 y1 = int(round((top + height) / scale))
-
                 x0 = max(0, min(rec["W"] - 1, x0))
                 x1 = max(0, min(rec["W"], x1))
                 y0 = max(0, min(rec["H"] - 1, y0))
@@ -313,7 +344,6 @@ def render_main(
                     x0, x1 = x1, x0
                 if y1 < y0:
                     y0, y1 = y1, y0
-
                 box = (x0, y0, x1, y1)
                 if is_unique_box(box, rec["boxes"]):
                     rec["boxes"].append(box)
@@ -321,17 +351,14 @@ def render_main(
             if added_any:
                 st.rerun()
 
-    # remove masks by clicking on them
-    elif st.session_state["side_interaction_mode"] == "Remove mask":
+    # ---- Remove mask
+    elif mode == "Remove mask":
         click = streamlit_image_coordinates(
             display_for_ui, key=f"{key_ns}_rm", width=disp_w
         )
-        if not click:
-            pass
-        else:
-            x, y = int(round(int(click["x"]) / scale)), int(
-                round(int(click["y"]) / scale)
-            )
+        if click:
+            x = int(round(int(click["x"]) / scale))
+            y = int(round(int(click["y"]) / scale))
             if (
                 0 <= x < rec["W"]
                 and 0 <= y < rec["H"]
@@ -342,9 +369,7 @@ def render_main(
                     iid = int(inst[y, x])
                     if iid > 0:
                         inst = inst.copy()
-                        inst[inst == iid] = 0  # remove clicked instance
-
-                        # relabel to 0,1..K (contiguous) and remap labels dict
+                        inst[inst == iid] = 0
                         vals, inv = np.unique(inst, return_inverse=True)
                         if vals.size > 1:
                             new_vals = np.zeros_like(vals)
@@ -362,26 +387,19 @@ def render_main(
                             }
                         else:
                             rec["labels"] = {}
-
                         rec["masks"] = inst
                         rec["last_click_xy"] = (x, y)
                         st.rerun()
 
-    # "Remove boxes by clicking on them"
-    elif st.session_state["side_interaction_mode"] == "Remove box":
-
-        # render the image and any boxes
-        overlay = draw_boxes_overlay(
-            display_img, rec["boxes"], alpha=0.25, outline_px=2
-        )
+    elif mode == "Remove box":
+        # draw on full-res base_img with original box coords
+        overlay = draw_boxes_overlay(base_img, rec["boxes"], alpha=0.25, outline_px=2)
         overlay_for_ui = np.array(
             Image.fromarray(overlay).resize((disp_w, disp_h), Image.BILINEAR)
         )
-        # record if there has been a click somewhere
         click = streamlit_image_coordinates(
             overlay_for_ui, key=f"{key_ns}_pred_click_remove", width=disp_w
         )
-        # if there is a click, check if the click is in any of the boxes, if so, remove the box
         if click:
             x = int(round(int(click["x"]) / scale))
             y = int(round(int(click["y"]) / scale))
@@ -393,3 +411,21 @@ def render_main(
             if hits:
                 rec["boxes"].pop(hits[-1])
                 st.rerun()
+
+
+# ---------- Rendering functions ----------
+
+
+def render_sidebar(*, key_ns: str = "side"):
+    nav_fragment(key_ns)
+    st.divider()
+    st.markdown("### Create and edit cell masks:")
+    interaction_mode_fragment(ns=key_ns)
+    cellpose_actions_fragment()
+    box_tools_fragment(key_ns)
+    mask_tools_fragment(key_ns)
+    download_fragment(key_ns)
+
+
+def render_main(*, key_ns: str = "edit"):
+    display_and_interact_fragment(key_ns=key_ns, mode_ns="side", scale=1.5)

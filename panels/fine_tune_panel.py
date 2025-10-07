@@ -265,15 +265,14 @@ def cellpose_train_fragment():
     wd = float(ss.get("cp_wd", 0.1))
     nimg = int(ss.get("cp_nimg", 32))
 
-    with st.spinner("Fine-tuning Cellpose…"):
-        train_losses, test_losses, model_name = finetune_cellpose_from_records(
-            recs,
-            base_model=base_model,
-            epochs=epochs,
-            learning_rate=lr,
-            weight_decay=wd,
-            nimg_per_epoch=nimg,
-        )
+    train_losses, test_losses, model_name = finetune_cellpose_from_records(
+        recs,
+        base_model=base_model,
+        epochs=epochs,
+        learning_rate=lr,
+        weight_decay=wd,
+        nimg_per_epoch=nimg,
+    )
 
     st.success(f"Fine-tuning complete ✅ (model: {model_name})")
 

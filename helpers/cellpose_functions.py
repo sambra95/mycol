@@ -212,6 +212,12 @@ def _has_cellpose_model():
     )
 
 
+def _save_fig_to_session(fig, key_prefix: str, dpi: int = 200):
+    buf = IO.BytesIO()
+    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+    st.session_state[f"{key_prefix}_png"] = buf.getvalue()
+
+
 def _plot_losses(train_losses, test_losses):
     fig = plt.figure(figsize=(6, 3))
     epochs = range(1, len(train_losses) + 1)
@@ -228,7 +234,17 @@ def _plot_losses(train_losses, test_losses):
     plt.title("Cellpose training and test losses during fine-tuning")
     plt.legend()
     plt.grid(True, alpha=0.3)
+
+    # Render first
     st.pyplot(fig, use_container_width=True)
+
+    # 🔸 Save to session state for later download/use
+    _save_fig_to_session(fig, key_prefix="cp_losses", dpi=300)
+
+    plt.close(fig)
+
+
+from sklearn.metrics import r2_score, mean_absolute_error
 
 
 def compare_models_mean_iou_plot(
@@ -240,7 +256,7 @@ def compare_models_mean_iou_plot(
     base = models.CellposeModel(gpu=use_gpu, model_type=base_model_name)
     base_preds, _, _ = base.eval(list(images), channels=list(channels))
 
-    # Fine-tuned model from session BYTES -> load into same model_type
+    # Fine-tuned model from session BYTES
     tuned = models.CellposeModel(gpu=use_gpu, model_type=base_model_name)
     ft_bytes = st.session_state.get("cellpose_model_bytes")
     if ft_bytes:
@@ -248,7 +264,7 @@ def compare_models_mean_iou_plot(
         tuned.net.load_state_dict(sd)
     tuned_preds, _, _ = tuned.eval(list(images), channels=list(channels))
 
-    # IoU per image (AP @ IoU=0.5 over labels)
+    # IoU per image
     base_ious = [
         metrics.average_precision([gt], [pr])[0][:, 0].mean()
         for gt, pr in zip(masks, base_preds)
@@ -261,7 +277,7 @@ def compare_models_mean_iou_plot(
     def _count_instances(lbl):
         return int(np.count_nonzero(np.unique(lbl)))  # #unique nonzero ids
 
-    # --- IoU data already computed earlier ---
+    # --- IoU data ---
     labels = ["Original", "Fine-tuned"]
     means = [np.mean(base_ious), np.mean(tuned_ious)]
     sds = [
@@ -276,7 +292,7 @@ def compare_models_mean_iou_plot(
 
     lim = max(1, max(gt_counts + base_counts + tuned_counts)) if gt_counts else 1
 
-    # --- Three subplots: IoU bar + scatter (original) + scatter (fine-tuned) ---
+    # --- Plots ---
     fig, (ax0, ax1, ax2) = plt.subplots(1, 3, figsize=(12, 4))
 
     # Panel 1: Mean IoU
@@ -313,6 +329,21 @@ def compare_models_mean_iou_plot(
     ax1.set_ylim(-0.5, lim + 0.5)
     ax1.grid(alpha=0.3)
 
+    # R² & MAE (base)
+    if len(gt_counts) > 1:
+        r2_base = r2_score(gt_counts, base_counts)
+        mae_base = mean_absolute_error(gt_counts, base_counts)
+        ax1.text(
+            0.05,
+            0.95,
+            f"R² = {r2_base:.3f}\nMAE = {mae_base:.3f}",
+            transform=ax1.transAxes,
+            va="top",
+            ha="left",
+            fontsize=9,
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.7),
+        )
+
     # Panel 3: Fine-tuned counts vs GT
     ax2.scatter(
         gt_counts,
@@ -329,7 +360,28 @@ def compare_models_mean_iou_plot(
     ax2.set_ylim(-0.5, lim + 0.5)
     ax2.grid(alpha=0.3)
 
+    # R² & MAE (tuned)
+    if len(gt_counts) > 1:
+        r2_tuned = r2_score(gt_counts, tuned_counts)
+        mae_tuned = mean_absolute_error(gt_counts, tuned_counts)
+        ax2.text(
+            0.05,
+            0.95,
+            f"R² = {r2_tuned:.3f}\nMAE = {mae_tuned:.3f}",
+            transform=ax2.transAxes,
+            va="top",
+            ha="left",
+            fontsize=9,
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.7),
+        )
+
     fig.suptitle("Original vs Fine-tuned Model Comparison", fontsize=13)
     plt.tight_layout()
+
+    # Render first
     st.pyplot(fig, use_container_width=True)
+
+    # 🔸 Save to session state for later download/use
+    _save_fig_to_session(fig, key_prefix="cp_compare_iou", dpi=300)
+
     plt.close(fig)

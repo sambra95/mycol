@@ -1,13 +1,19 @@
 # panels/train_densenet.py
 import numpy as np
+import pandas as pd
 import streamlit as st
+
+# from PIL import Image  # (only if your helpers rely on PIL types somewhere)
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score
 from tensorflow.keras.callbacks import EarlyStopping
-import pandas as pd
+import itertools
+from cellpose import models, metrics, core
+import torch
+import io as IO
 
-# ---- bring in existing app helpers ----
+# ---- app helpers ----
 from helpers.state_ops import ordered_keys
 from helpers.densenet_functions import (
     load_labeled_patches_from_session,
@@ -25,47 +31,96 @@ from helpers.cellpose_functions import (
 ss = st.session_state
 
 
-def render_densenet_train_panel(key_ns: str = "train_densenet"):
+# ========== DenseNet: options (light) + dataset summary (light-ish) + training (heavy) ==========
+
+
+def _densenet_options(key_ns="train_densenet"):
+    """Light controls – lives outside fragments so changing options refreshes summary."""
     st.header("Train DenseNet on labeled cell patches")
+
     if not ordered_keys():
         st.info("Upload data and add labels in the other panels first.")
-        return
+        return False
 
     with st.expander("Training options", expanded=True):
         c1, c2, c3, c4 = st.columns(4)
-        input_size = c1.selectbox("Input size", options=[64, 96, 128], index=0)
-        batch_size = c2.selectbox("Batch size", options=[8, 16, 32, 64], index=2)
-        base_trainable = c3.checkbox("Fine-tune base (unfreeze)", value=False)
-        epochs = c4.number_input(
+        ss.setdefault("dn_input_size", 64)
+        ss.setdefault("dn_batch_size", 32)
+        ss.setdefault("dn_base_trainable", False)
+        ss.setdefault("dn_max_epoch", 100)
+        ss.setdefault("dn_val_split", 0.2)
+
+        ss["dn_input_size"] = c1.selectbox(
+            "Input size",
+            options=[64, 96, 128],
+            index=[64, 96, 128].index(ss["dn_input_size"]),
+        )
+        ss["dn_batch_size"] = c2.selectbox(
+            "Batch size",
+            options=[8, 16, 32, 64],
+            index=[8, 16, 32, 64].index(ss["dn_batch_size"]),
+        )
+        ss["dn_base_trainable"] = c3.checkbox(
+            "Fine-tune base (unfreeze)", value=ss["dn_base_trainable"]
+        )
+        ss["dn_max_epoch"] = c4.number_input(
             "Max epochs",
             min_value=1,
             max_value=500,
-            value=100,
+            value=int(ss["dn_max_epoch"]),
             step=5,
-            key="max_epoch_densenet",
+            key="max_epoch_densenet_ui",
         )
-        val_split = st.slider("Validation split", 0.05, 0.4, 0.2, 0.05)
 
-    # Load patches from session
+        ss["dn_val_split"] = st.slider(
+            "Validation split", 0.05, 0.4, float(ss["dn_val_split"]), 0.05
+        )
+
+    return True
+
+
+@st.fragment
+def densenet_summary_fragment():
+    """Loads patches and shows a simple class frequency table (reruns when the page reruns)."""
+    input_size = int(ss.get("dn_input_size", 64))
+
+    # Load patches only for summary; heavy-ish but isolated here
     X, y, classes = load_labeled_patches_from_session(patch_size=input_size)
-    if X.shape[0] < 2 or len(np.unique(y)) < 2:
-        st.warning("Need at least 2 samples and 2 classes. Add more labeled cells.")
-        return
 
-    # Count, making sure every class appears (even if 0)
+    # Count occurrences per class (ensure all classes present)
     counts = np.bincount(y, minlength=len(classes))
-
     freq_df = pd.DataFrame({"Class": list(classes), "Count": counts.astype(int)})
 
     st.write(f"Found {int(counts.sum())} patches across {len(classes)} classes.")
     st.table(freq_df)
+
+
+@st.fragment
+def densenet_train_fragment():
+    """Runs the full DenseNet training pipeline when the button is clicked."""
+    go = st.button("Start training", use_container_width=True, type="primary")
+    if not go:
+        return
+
+    # Read options from session
+    input_size = int(ss.get("dn_input_size", 64))
+    batch_size = int(ss.get("dn_batch_size", 32))
+    base_trainable = bool(ss.get("dn_base_trainable", False))
+    epochs = int(ss.get("dn_max_epoch", 100))
+    val_split = float(ss.get("dn_val_split", 0.2))
+
+    # Load data (heavy)
+    X, y, classes = load_labeled_patches_from_session(patch_size=input_size)
+    if X.shape[0] < 2 or len(np.unique(y)) < 2:
+        st.warning("Need at least 2 samples and 2 classes. Add more labeled cells.")
+        return
 
     # Split
     X_train, X_val, y_train, y_val = train_test_split(
         X, y, test_size=val_split, stratify=y, random_state=42
     )
 
-    # Generators
+    # Data generators
     train_gen = AugSequence(
         X_train,
         y_train,
@@ -97,26 +152,20 @@ def render_densenet_train_panel(key_ns: str = "train_densenet"):
     )
 
     # Train
-    go = st.button("Start training", use_container_width=True, type="primary")
-    if not go:
-        return
-
     es = EarlyStopping(
         monitor="val_loss", patience=15, restore_best_weights=True, verbose=1
     )
-
     with st.spinner("Training DenseNet…"):
         history = model.fit(
             train_gen,
             validation_data=val_gen,
-            epochs=int(epochs),
+            epochs=epochs,
             callbacks=[es],
             class_weight=class_weights_dict,
             verbose=0,
         )
 
     # Evaluate on validation set
-    # Collect all val batches
     Xv, yv = [], []
     for i in range(len(val_gen)):
         xb, yb = val_gen[i]
@@ -137,65 +186,133 @@ def render_densenet_train_panel(key_ns: str = "train_densenet"):
     f1 = f1_score(yv, y_pred, average="weighted", zero_division=0)
     metrics_dict = {"Accuracy": acc, "Precision": prec, "F1": f1}
 
+    # Plots
     _plot_densenet_losses(
         history.history.get("loss", []),
         history.history.get("val_loss", []),
         metrics=metrics_dict,
     )
-
     cm = confusion_matrix(yv, y_pred, labels=np.arange(len(classes)))
     fig = _plot_confusion_matrix(cm, classes, normalize=False)
     st.pyplot(fig, use_container_width=True)
 
-    # Keep model in session (per your requirement)
+    # Persist the model in session
     ss["densenet_ckpt_bytes"] = model
     ss["densenet_ckpt_name"] = "densenet_finetuned"
-    # Also expose a simple predictor for the rest of the app
     ss["densenet_model"] = model
 
 
-# panels/train_cellpose_panel.py
+def render_densenet_train_panel(key_ns: str = "train_densenet"):
+    if not _densenet_options(key_ns):
+        return
+    densenet_summary_fragment()  # light-ish; recomputes only when page reruns
+    densenet_train_fragment()  # heavy; runs only on button click
 
 
-def render_cellpose_train_panel(key_ns="train_cellpose"):
+# ========== Cellpose: options + training ==========
+
+
+def _cellpose_options(key_ns="train_cellpose"):
     st.header("Fine-tune Cellpose on your labeled data")
 
     if not ordered_keys():
         st.info("Upload data and label masks first.")
-        return
+        return False
 
     with st.expander("Training options", expanded=True):
         c1, c2, c3, c4 = st.columns(4)
-        base_model = c1.selectbox(
+
+        # Defaults
+        ss.setdefault("cp_base_model", "cyto2")
+        ss.setdefault("cp_max_epoch", 100)
+        ss.setdefault("cp_lr", 5e-5)
+        ss.setdefault("cp_wd", 0.1)
+        ss.setdefault("cp_nimg", 32)
+
+        ss["cp_base_model"] = c1.selectbox(
             "Base model",
             options=["cyto2", "cyto", "nuclei", "scratch"],
-            index=0,
+            index=["cyto2", "cyto", "nuclei", "scratch"].index(ss["cp_base_model"]),
         )
-        epochs = c2.number_input(
-            "Max epochs", 1, 500, 100, step=5, key="max_epcoh_cellpose"
+        ss["cp_max_epoch"] = c2.number_input(
+            "Max epochs", 1, 500, int(ss["cp_max_epoch"]), step=5
         )
-        lr = c3.number_input(
-            "Learning rate", min_value=1e-6, max_value=1e-2, value=5e-5, format="%.5f"
+        ss["cp_lr"] = c3.number_input(
+            "Learning rate",
+            min_value=1e-6,
+            max_value=1e-2,
+            value=float(ss["cp_lr"]),
+            format="%.5f",
         )
-        wd = c4.number_input(
-            "Weight decay", min_value=0.0, max_value=1.0, value=0.1, step=0.05
+        ss["cp_wd"] = c4.number_input(
+            "Weight decay",
+            min_value=0.0,
+            max_value=1.0,
+            value=float(ss["cp_wd"]),
+            step=0.05,
         )
 
-        nimg = st.slider("Images per epoch", 1, 128, 32, 1)
+        ss["cp_nimg"] = st.slider("Images per epoch", 1, 128, int(ss["cp_nimg"]), 1)
 
+    # --- Hyperparameter tuning toggle + grid inputs ---
+    ss.setdefault("cp_do_gridsearch", False)
+    ss["cp_do_gridsearch"] = st.checkbox(
+        "Run hyperparameter tuning (grid search)",
+        value=bool(ss["cp_do_gridsearch"]),
+    )
+
+    if ss["cp_do_gridsearch"]:
+        with st.expander("Grid search options", expanded=True):
+            st.caption("Provide comma-separated lists. Leave blank to use defaults.")
+
+            # Defaults for the grid
+            ss.setdefault("cp_grid_cellprob", "0.2, 0.0, -0.2")
+            ss.setdefault("cp_grid_flow", "0.3, 0.4, 0.6")
+            ss.setdefault("cp_grid_niter", "1000")
+            ss.setdefault("cp_grid_min_size", "0, 100")
+
+            ss["cp_grid_cellprob"] = st.text_input(
+                "cellprob_threshold values",
+                ss["cp_grid_cellprob"],
+                help="Examples: 0.2, 0.0, -0.2",
+            )
+            ss["cp_grid_flow"] = st.text_input(
+                "flow_threshold values",
+                ss["cp_grid_flow"],
+                help="Examples: 0.3, 0.4, 0.6",
+            )
+            ss["cp_grid_niter"] = st.text_input(
+                "niter values", ss["cp_grid_niter"], help="Examples: 500, 1000"
+            )
+            ss["cp_grid_min_size"] = st.text_input(
+                "min_size values",
+                ss["cp_grid_min_size"],
+                help="Examples: 0, 100, 200",
+            )
+
+    return True
+
+
+@st.fragment
+def cellpose_train_fragment():
     go = st.button("Start fine-tuning", use_container_width=True, type="primary")
     if not go:
         return
 
     recs = {k: st.session_state["images"][k] for k in ordered_keys()}
+    base_model = ss.get("cp_base_model", "cyto2")
+    epochs = int(ss.get("cp_max_epoch", 100))
+    lr = float(ss.get("cp_lr", 5e-5))
+    wd = float(ss.get("cp_wd", 0.1))
+    nimg = int(ss.get("cp_nimg", 32))
 
     train_losses, test_losses, model_name = finetune_cellpose_from_records(
         recs,
         base_model=base_model,
-        epochs=int(epochs),
+        epochs=epochs,
         learning_rate=lr,
         weight_decay=wd,
-        nimg_per_epoch=int(nimg),
+        nimg_per_epoch=nimg,
     )
 
     st.success(f"Fine-tuning complete ✅ (model: {model_name})")
@@ -205,9 +322,148 @@ def render_cellpose_train_panel(key_ns="train_cellpose"):
 
     _plot_losses(train_losses, test_losses)
 
+    # ----- Prepare a (possibly subsampled) evaluation set -----
     masks = [rec["masks"] for rec in recs.values()]
+    images = [rec["image"] for rec in recs.values()]
+    N = len(images)
+    sample_n = min(50, N)
+    if N > sample_n:
+        rng = np.random.default_rng()
+        idx = rng.choice(N, size=sample_n, replace=False)
+        images = [images[i] for i in idx]
+        masks = [masks[i] for i in idx]
+
+    # ----- OPTIONAL: Hyperparameter grid search -----
+    if ss.get("cp_do_gridsearch", False):
+        st.subheader("Hyperparameter tuning (grid search)")
+
+        # Parse user grid text inputs into lists
+        def _parse_float_list(s, default):
+            s = (s or "").strip()
+            if not s:
+                return default
+            try:
+                return [float(x.strip()) for x in s.split(",")]
+            except Exception:
+                return default
+
+        def _parse_int_list(s, default):
+            s = (s or "").strip()
+            if not s:
+                return default
+            try:
+                return [int(float(x.strip())) for x in s.split(",")]
+            except Exception:
+                return default
+
+        grid_cellprob = _parse_float_list(
+            ss.get("cp_grid_cellprob", "0.2, 0.0, -0.2"), [0.2, 0.0, -0.2]
+        )
+        grid_flow = _parse_float_list(
+            ss.get("cp_grid_flow", "0.3, 0.4, 0.6"), [0.3, 0.4, 0.6]
+        )
+        grid_niter = _parse_int_list(ss.get("cp_grid_niter", "1000"), [1000])
+        grid_min_size = _parse_int_list(ss.get("cp_grid_min_size", "0, 100"), [0, 100])
+
+        # Build combinations
+        combos = list(
+            itertools.product(grid_cellprob, grid_flow, grid_niter, grid_min_size)
+        )
+        total = len(combos)
+        if total == 0:
+            st.warning("No valid grid combinations. Skipping tuning.")
+        else:
+            # Get channels from session (fallback 0,0)
+            ch1 = int(st.session_state.get("cp_ch1", 0))
+            ch2 = int(st.session_state.get("cp_ch2", 0))
+            channels = [ch1, ch2]
+
+            # Load the in-memory fine-tuned model from session state
+            # Expecting bytes saved somewhere like "cellpose_model_bytes"
+            use_gpu = core.use_gpu()
+            eval_model = models.CellposeModel(
+                gpu=use_gpu,
+                model_type=base_model if base_model != "scratch" else "cyto2",
+            )
+            ft_bytes = st.session_state.get("cellpose_model_bytes")
+            if ft_bytes:
+                try:
+                    sd = torch.load(IO.BytesIO(ft_bytes), map_location="cpu")
+                    eval_model.net.load_state_dict(sd)
+                except Exception as e:
+                    st.error(f"Failed to load fine-tuned weights from session: {e}")
+
+            results = []
+            pb = st.progress(0.0, text="Starting grid search…")
+            for i, (cellprob, flowthresh, niter, min_size) in enumerate(combos, 1):
+                pb.progress(
+                    i / total,
+                    text=f"Evaluating {i}/{total} (cp={cellprob}, flow={flowthresh}, niter={niter}, min={min_size})",
+                )
+                try:
+                    masks_pred, flows, styles = eval_model.eval(
+                        list(images),
+                        channels=list(channels),
+                        diameter=None,
+                        cellprob_threshold=cellprob,
+                        flow_threshold=flowthresh,
+                        niter=niter,
+                        min_size=min_size,
+                    )
+                    ap = metrics.average_precision(masks, masks_pred)[
+                        0
+                    ]  # AP per-image matrix
+                    score = float(np.nanmean(ap[:, 0]))  # mean AP at IoU=0.5
+                except Exception as e:
+                    st.warning(
+                        f"Evaluation error for cp={cellprob}, flow={flowthresh}, niter={niter}, min={min_size}: {e}"
+                    )
+                    score = float("nan")
+
+                results.append(
+                    {
+                        "cellprob": cellprob,
+                        "flow_threshold": flowthresh,
+                        "niter": niter,
+                        "min_size": min_size,
+                        "ap_iou_0.5": score,
+                    }
+                )
+
+            pb.empty()
+
+            # Store + show results (no CSV write)
+            df = pd.DataFrame(results).sort_values(
+                by="ap_iou_0.5", ascending=False, na_position="last"
+            )
+            st.session_state["cp_grid_results_df"] = df
+            st.dataframe(df, use_container_width=True)
+
+            # Pick best and push into session state used by the mask editing panel
+            if not df.empty and np.isfinite(df["ap_iou_0.5"].iloc[0]):
+                best = df.iloc[0]
+                ss["cp_cellprob_threshold"] = float(best["cellprob"])
+                ss["cp_flow_threshold"] = float(best["flow_threshold"])
+                ss["cp_min_size"] = int(best["min_size"])
+                ss["cp_niter"] = int(
+                    best["niter"]
+                )  # not used in segment_rec_with_cellpose, but we keep it
+                st.success(
+                    f"Best hyperparameters set: cellprob={best['cellprob']}, "
+                    f"flow={best['flow_threshold']}, min_size={int(best['min_size'])}, niter={int(best['niter'])}"
+                )
+            else:
+                st.info("No valid result to set best hyperparameters.")
+
+    # ----- Plot model comparison afterwards (unchanged) -----
     compare_models_mean_iou_plot(
-        [rec["image"] for rec in recs.values()],
+        images,
         masks,
         base_model_name=base_model if base_model != "scratch" else "cyto2",
     )
+
+
+def render_cellpose_train_panel(key_ns="train_cellpose"):
+    if not _cellpose_options(key_ns):
+        return
+    cellpose_train_fragment()  # heavy; runs only on button click

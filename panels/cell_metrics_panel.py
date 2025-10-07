@@ -55,42 +55,6 @@ def render_sidebar():
         key="analysis_metrics",
     )
 
-    # --- 1) Per-cell table --------------------------------------------------------
-    labels_to_use = st.session_state.get("analysis_labels", label_options)
-    df_cell_df = df[df["mask label"].isin(labels_to_use)]
-    st.download_button(
-        "Download analysis CSV",
-        data=df_cell_df.to_csv(index=False).encode("utf-8"),
-        file_name="cell_analysis.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
-
-    # --- 2) Image-level summary: total cells + counts per group -------------------
-    image_counts_df = build_image_summary_df()
-    st.download_button(
-        "Download image counts",
-        data=image_counts_df.to_csv(index=False).encode("utf-8"),
-        file_name="image_counts.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
-
-    # Download button (ZIP of displayed plots)
-
-    zbuf = io.BytesIO()
-    with ZipFile(zbuf, "w") as zf:
-        for fname, img in st.session_state.get("analysis_plots", []):
-            zf.writestr(fname, img)
-    zbuf.seek(0)
-    st.download_button(
-        "Download plots",
-        data=zbuf.getvalue(),
-        file_name="plots.zip",
-        mime="application/zip",
-        use_container_width=True,
-    )
-
 
 def render_main():
 

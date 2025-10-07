@@ -5,7 +5,6 @@ from PIL import Image
 from streamlit_drawable_canvas import st_canvas
 from streamlit_image_coordinates import streamlit_image_coordinates
 
-from helpers.upload_download_functions import zip_all_masks
 from helpers.cellpose_functions import _has_cellpose_model, segment_rec_with_cellpose
 from helpers.state_ops import ordered_keys, set_current_by_index, current
 from helpers.mask_editing_functions import (
@@ -334,30 +333,6 @@ def mask_tools_fragment(key_ns="side"):
         st.rerun()
 
 
-# ---------- Sidebar: Download (light) ----------
-
-
-@st.fragment
-def download_fragment(key_ns="side"):
-    ok = ordered_keys()
-    imgs = st.session_state.images if "images" in st.session_state else {}
-    downloadable = (
-        any(getattr(r["masks"], "size", 0) > 0 for r in imgs.values())
-        if imgs
-        else False
-    )
-    data_bytes = zip_all_masks(imgs, ok) if downloadable else b""
-    st.download_button(
-        "Download all masks (.zip)",
-        data=data_bytes,
-        file_name="masks.zip",
-        mime="application/zip",
-        disabled=not downloadable,
-        use_container_width=True,
-        key=f"{key_ns}_dl",
-    )
-
-
 # ---------- Main: display + interaction canvas ----------
 
 
@@ -539,7 +514,6 @@ def render_sidebar(*, key_ns: str = "side"):
     cellpose_actions_fragment()
     box_tools_fragment(key_ns)
     mask_tools_fragment(key_ns)
-    download_fragment(key_ns)
 
 
 def render_main(*, key_ns: str = "edit"):

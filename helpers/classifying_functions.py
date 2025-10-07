@@ -431,7 +431,7 @@ def stack_to_instances_binary_first(m: np.ndarray) -> np.ndarray:
     """
     Robust stack (N,H,W,[...]) -> instance labels (H,W) uint16.
     - Treats >0 as 1
-    - Resolves overlaps by descending area (largest wins), matching your UI behavior.
+    - Resolves overlaps by descending area (largest wins), matching UI behavior.
     """
     m = np.asarray(m)
     if m.ndim == 4 and m.shape[-1] in (1, 3):

@@ -100,7 +100,7 @@ def create_new_record_with_image(uploaded_file):
         return
 
     # new record
-    img_np = np.array(Image.open(uploaded_file).convert("RGB"), dtype=np.uint16)
+    img_np = np.array(Image.open(uploaded_file).convert("RGB"), dtype=np.uint8)
     H, W = img_np.shape[:2]
     k = st.session_state.next_ord
     st.session_state.next_ord += 1
@@ -228,21 +228,6 @@ def build_densenet_artifacts_zip() -> bytes | None:
     return buf.getvalue()
 
 
-def _to_u8(img: np.ndarray) -> np.ndarray:
-    """Robustly convert microscopy arrays (uint8/uint16/float) to uint8 RGB for PNG export."""
-    a = img
-    if a.ndim == 2:
-        a = np.stack([a] * 3, axis=-1)
-    if a.dtype == np.float32 or a.dtype == np.float64:
-        a = np.clip(a, 0, 1)
-        a = (a * 255).astype(np.uint8)
-    elif a.dtype == np.uint16:
-        a = (a / 257.0).astype(np.uint8)  # 16-bit -> 8-bit
-    elif a.dtype != np.uint8:
-        a = a.astype(np.uint8)
-    return a
-
-
 def _counts_for_rec(rec) -> dict:
     """Return dict class_name -> count for one record, using rec['labels'] mapping."""
     labels = rec.get("labels", {}) or {}
@@ -259,13 +244,6 @@ def build_masks_images_zip(
 ) -> bytes:
     buf = io.BytesIO()
     with ZipFile(buf, mode="w", compression=ZIP_DEFLATED) as zf:
-        # Write a README
-        zf.writestr(
-            "README.txt",
-            "Export produced by the Downloads panel.\n"
-            "images/*.png are 8-bit previews; masks/*.tif are 16-bit instance labels.\n",
-        )
-
         # Class color palette (only if overlays requested)
         palette = (
             palette_from_emojis(
@@ -286,11 +264,10 @@ def build_masks_images_zip(
                 tiff.imwrite(tbuf, inst.astype(np.uint16))
                 zf.writestr(f"masks/{name}.tif", tbuf.getvalue())
 
-            # Write image preview (PNG)
-            img_u8 = _to_u8(rec["image"])
+            img = np.asarray(rec["image"], dtype=np.uint8)
             ibuf = io.BytesIO()
-            Image.fromarray(img_u8).save(ibuf, format="PNG")
-            zf.writestr(f"images/{name}.png", ibuf.getvalue())
+            tiff.imwrite(ibuf, img, photometric="rgb")
+            zf.writestr(f"images/{name}.tif", ibuf.getvalue())
 
             # Optional overlay (colored masks) and counts text
             if include_overlay:
@@ -298,7 +275,7 @@ def build_masks_images_zip(
                     rec.get("masks"), rec.get("labels", {})
                 )
                 overlay = composite_over_by_class(
-                    img_u8, rec.get("masks"), classes_map, palette, alpha=0.35
+                    rec["image"], rec.get("masks"), classes_map, palette, alpha=0.35
                 )
                 if include_counts:
                     draw = ImageDraw.Draw(Image.fromarray(overlay))
@@ -318,9 +295,10 @@ def build_masks_images_zip(
                         d.multiline_text((pad, pad), txt, fill=(255, 255, 255))
                         overlay = np.array(pil)
 
+                overlay = np.asarray(overlay, dtype=np.uint8)
                 obuf = io.BytesIO()
-                Image.fromarray(overlay).save(obuf, format="PNG")
-                zf.writestr(f"overlays/{name}.png", obuf.getvalue())
+                tiff.imwrite(obuf, overlay, photometric="rgb", compression="deflate")
+                zf.writestr(f"overlays/{name}.tif", obuf.getvalue())
 
     return buf.getvalue()
 

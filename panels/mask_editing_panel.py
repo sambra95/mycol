@@ -101,9 +101,92 @@ def interaction_mode_fragment(ns="side"):
 # ---------- Sidebar: Cellpose actions ----------
 
 
+import streamlit as st
+
+
 @st.fragment
 def cellpose_actions_fragment():
-    # Segment current
+    # --- Hyperparameters (collapsible) ---
+    with st.expander("Cellpose hyperparameters", expanded=False):
+        # We use a small form so changing values doesn't trigger reruns mid-typing
+        with st.form("cellpose_hparams_form", clear_on_submit=False):
+            # Channels (two ints)
+            c1 = st.number_input(
+                "Channel 1",
+                value=st.session_state.get("cp_ch1", 0),
+                step=1,
+                format="%d",
+                key="cp_ch1",
+            )
+            c2 = st.number_input(
+                "Channel 2",
+                value=st.session_state.get("cp_ch2", 0),
+                step=1,
+                format="%d",
+                key="cp_ch2",
+            )
+
+            # Diameter: auto (None) or manual
+            diam_mode = st.selectbox(
+                "Diameter mode",
+                ["Auto (None)", "Manual"],
+                index=(
+                    0
+                    if st.session_state.get("cp_diam_mode", "Auto (None)")
+                    == "Auto (None)"
+                    else 1
+                ),
+                key="cp_diam_mode",
+                help="Leave as Auto for Cellpose to estimate diameter, or set a manual value.",
+            )
+            diam_val = None
+            if diam_mode == "Manual":
+                diam_val = st.number_input(
+                    "Manual diameter (pixels)",
+                    min_value=0.0,
+                    value=float(st.session_state.get("cp_diameter", 0.0) or 0.0),
+                    step=1.0,
+                    key="cp_diameter",
+                )
+
+            # Thresholds & size
+            cellprob = st.number_input(
+                "Cellprob threshold",
+                value=float(st.session_state.get("cp_cellprob_threshold", -0.2)),
+                step=0.1,
+                key="cp_cellprob_threshold",
+                help="Higher -> fewer cells. Default -0.2",
+            )
+            flowthr = st.number_input(
+                "Flow threshold",
+                value=float(st.session_state.get("cp_flow_threshold", 0.4)),
+                step=0.1,
+                key="cp_flow_threshold",
+                help="Lower -> more permissive flows. Default 0.4",
+            )
+            min_size = st.number_input(
+                "Minimum size (pixels)",
+                value=int(st.session_state.get("cp_min_size", 0)),
+                min_value=0,
+                step=10,
+                key="cp_min_size",
+                help="Remove masks smaller than this area.",
+            )
+
+            cols = st.columns([1, 1])
+            with cols[0]:
+                submitted = st.form_submit_button(
+                    "Apply changes", use_container_width=True
+                )
+            with cols[1]:
+                if st.form_submit_button("Reset defaults", use_container_width=True):
+                    _reset_cellpose_hparams_to_defaults()
+
+        # sync diameter to None when Auto selected
+        if st.session_state.get("cp_diam_mode", "Auto (None)") == "Auto (None)":
+            st.session_state["cp_diameter"] = None
+
+    # --- Action buttons ---
     st.button(
         "Segment current image with Cellpose",
         key="btn_segment_cellpose",
@@ -117,7 +200,6 @@ def cellpose_actions_fragment():
         on_click=_segment_current_and_refresh,
     )
 
-    # Batch segment all
     st.button(
         "Batch segment all images with Cellpose",
         key="btn_batch_segment_cellpose",
@@ -132,10 +214,23 @@ def cellpose_actions_fragment():
     )
 
 
+def _reset_cellpose_hparams_to_defaults():
+    st.session_state["cp_ch1"] = 0
+    st.session_state["cp_ch2"] = 0
+    st.session_state["cp_diam_mode"] = "Auto (None)"
+    st.session_state["cp_diameter"] = None
+    st.session_state["cp_cellprob_threshold"] = -0.2
+    st.session_state["cp_flow_threshold"] = 0.4
+    st.session_state["cp_min_size"] = 0
+    st.session_state["cp_do_normalize"] = True
+    st.toast("Cellpose hyperparameters reset to defaults")
+
+
 def _segment_current_and_refresh():
     rec = current()
     if rec is not None:
-        segment_rec_with_cellpose(rec)
+        params = _read_cellpose_hparams_from_state()
+        segment_rec_with_cellpose(rec, **params)
         st.session_state["edit_canvas_nonce"] += 1
     st.rerun()
 
@@ -144,14 +239,34 @@ def _batch_segment_and_refresh():
     ok = ordered_keys()
     if not ok:
         return
+    params = _read_cellpose_hparams_from_state()
     n = len(ok)
     pb = st.progress(0.0, text="Starting…")
     for i, k in enumerate(ok, 1):
-        segment_rec_with_cellpose(st.session_state.images.get(k))
+        segment_rec_with_cellpose(st.session_state.images.get(k), **params)
         pb.progress(i / n, text=f"Segmented {i}/{n}")
     pb.empty()
     st.session_state["edit_canvas_nonce"] += 1
     st.rerun()
+
+
+def _read_cellpose_hparams_from_state():
+    # Build kwargs matching segment_rec_with_cellpose signature
+    ch1 = int(st.session_state.get("cp_ch1", 0))
+    ch2 = int(st.session_state.get("cp_ch2", 0))
+    diameter = st.session_state.get("cp_diameter", None)
+    # ensure None if 0.0 when Auto
+    if st.session_state.get("cp_diam_mode", "Auto (None)") == "Auto (None)":
+        diameter = None
+
+    return dict(
+        channels=(ch1, ch2),
+        diameter=diameter,
+        cellprob_threshold=float(st.session_state.get("cp_cellprob_threshold", -0.2)),
+        flow_threshold=float(st.session_state.get("cp_flow_threshold", 0.4)),
+        min_size=int(st.session_state.get("cp_min_size", 0)),
+        do_normalize=bool(st.session_state.get("cp_do_normalize", True)),
+    )
 
 
 # ---------- Sidebar: Box utilities ----------

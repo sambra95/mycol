@@ -117,5 +117,4 @@ def render_main():
         if not ok:
             st.info("No images uploaded yet.")
         else:
-            with st.container(height=580):
-                render_images_form()
+            render_images_form()

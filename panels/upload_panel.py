@@ -119,13 +119,28 @@ def render_main():
         if not ok:
             st.info("No images uploaded yet.")
         else:
-            with st.container(height=500):
+            with st.container(height=580):
                 h1, h2, h3, h4, h5 = st.columns([4, 2, 2, 2, 2])
-                h1.markdown("**Image**")
-                h2.markdown("**Masks?**")
-                h3.markdown("**Number of Masks**")
-                h4.markdown("**Labelled Masks**")
-                h5.markdown("**Remove**")
+                h1.markdown(
+                    "<div style='text-align: center; font-weight: bold;'>Image</div>",
+                    unsafe_allow_html=True,
+                )
+                h2.markdown(
+                    "<div style='text-align: center; font-weight: bold;'>Masks?</div>",
+                    unsafe_allow_html=True,
+                )
+                h3.markdown(
+                    "<div style='text-align: center; font-weight: bold;'>Number of Masks</div>",
+                    unsafe_allow_html=True,
+                )
+                h4.markdown(
+                    "<div style='text-align: center; font-weight: bold;'>Labelled Masks</div>",
+                    unsafe_allow_html=True,
+                )
+                h5.markdown(
+                    "<div style='text-align: center; font-weight: bold;'>Remove</div>",
+                    unsafe_allow_html=True,
+                )
                 for k in ok:
                     rec = ss.images[k]  # sets the row record
                     masks = rec.get("masks")

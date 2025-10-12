@@ -119,31 +119,34 @@ def render_main():
         if not ok:
             st.info("No images uploaded yet.")
         else:
-            h1, h2, h3, h4, h5 = st.columns([4, 2, 2, 2, 2])
-            h1.markdown("**Image**")
-            h2.markdown("**Mask present**")
-            h3.markdown("**Number of cells**")
-            h4.markdown("**Labelled Masks**")
-            h5.markdown("**Remove**")
-            for k in ok:
-                rec = ss.images[k]  # sets the row record
-                masks = rec.get("masks")
-                n_labels = len([v for v in rec["labels"].values() if v != None])
-                # n_labels is just number of values of not None in dictionary
-                has_mask = (
-                    isinstance(masks, np.ndarray) and masks.ndim == 2 and masks.any()
-                )  # check for a mask with the right format
-                n_cells = (
-                    int(len(np.unique(masks)) - 1) if has_mask else 0
-                )  # n_cells = number of non 0 integers
-                c1, c2, c3, c4, c5 = st.columns([4, 2, 2, 2, 2])
-                # write out the table
-                c1.write(rec["name"])
-                c2.write("✅" if has_mask else "❌")
-                c3.write(str(n_cells))
-                c4.write(f"{n_labels}/{n_cells}")
-                if c5.button("Remove", key=f"remove_{k}"):
-                    del ss.images[k]
-                    ok2 = ordered_keys()
-                    ss.current_key = ok2[0] if ok2 else None
-                    st.rerun()
+            with st.container(height=500):
+                h1, h2, h3, h4, h5 = st.columns([4, 2, 2, 2, 2])
+                h1.markdown("**Image**")
+                h2.markdown("**Masks?**")
+                h3.markdown("**Number of Masks**")
+                h4.markdown("**Labelled Masks**")
+                h5.markdown("**Remove**")
+                for k in ok:
+                    rec = ss.images[k]  # sets the row record
+                    masks = rec.get("masks")
+                    n_labels = len([v for v in rec["labels"].values() if v != None])
+                    # n_labels is just number of values of not None in dictionary
+                    has_mask = (
+                        isinstance(masks, np.ndarray)
+                        and masks.ndim == 2
+                        and masks.any()
+                    )  # check for a mask with the right format
+                    n_cells = (
+                        int(len(np.unique(masks)) - 1) if has_mask else 0
+                    )  # n_cells = number of non 0 integers
+                    c1, c2, c3, c4, c5 = st.columns([4, 2, 2, 2, 2])
+                    # write out the table
+                    c1.write(rec["name"])
+                    c2.write("✅" if has_mask else "❌")
+                    c3.write(str(n_cells))
+                    c4.write(f"{n_labels}/{n_cells}")
+                    if c5.button("❌", key=f"remove_{k}", use_container_width=True):
+                        del ss.images[k]
+                        ok2 = ordered_keys()
+                        ss.current_key = ok2[0] if ok2 else None
+                        st.rerun()

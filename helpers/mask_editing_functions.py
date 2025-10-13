@@ -10,7 +10,37 @@ from typing import Dict, Any
 from scipy import ndimage as ndi
 
 from helpers.cellpose_functions import segment_rec_with_cellpose
-from helpers.state_ops import ordered_keys, current
+from helpers.state_ops import ordered_keys, set_current_by_index, current
+
+
+# @st.fragment
+def nav_fragment(key_ns="side"):
+    ok = ordered_keys()
+    if not ok:
+        st.warning("Upload an image in **Upload data** first.")
+        return
+
+    rec = current()
+    names = [st.session_state.images[k]["name"] for k in ok]
+    reck = st.session_state.current_key
+    rec_idx = ok.index(reck) if reck in ok else 0
+    st.markdown(f"**Image {rec_idx+1}/{len(ok)}:** {names[rec_idx]}")
+
+    c1, c2 = st.columns(2)
+    if c1.button("◀ Prev", key=f"{key_ns}_prev", use_container_width=True):
+        set_current_by_index(rec_idx - 1)
+        st.rerun()
+    if c2.button("Next ▶", key=f"{key_ns}_next", use_container_width=True):
+        set_current_by_index(rec_idx + 1)
+        st.rerun()
+
+    st.toggle("Show mask overlay", key="show_overlay", value=True)
+
+    mode = st.session_state[f"interaction_mode"]
+    if mode == "Assign class":
+        current_class = st.session_state[f"side_current_class"]
+        mode = f"{mode} (**{current_class}**)"
+    st.caption(f"Current click action: {mode}")
 
 
 # ============================================================

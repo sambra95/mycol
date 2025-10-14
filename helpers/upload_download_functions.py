@@ -150,7 +150,7 @@ def render_images_form():
             height=580,
             use_container_width=True,
             column_config={"Remove": st.column_config.CheckboxColumn()},
-            disabled=["Image", "Masks?", "Number of Masks", "Labelled Masks"],
+            disabled=["Image", "Masks Present", "Number of Masks", "Number of Labels"],
         )
         if st.form_submit_button("Apply", use_container_width=True):
             for k in edited.loc[edited["Remove"]].index:

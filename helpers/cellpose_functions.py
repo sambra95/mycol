@@ -8,7 +8,7 @@ from PIL import Image
 import io as IO
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import r2_score, mean_absolute_error
+from sklearn.metrics import r2_score, mean_absolute_erro
 
 
 def finetune_cellpose_from_records(

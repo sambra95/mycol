@@ -291,36 +291,33 @@ def polygon_to_mask(obj, h, w):
 # -----------------------------------------------------#
 
 
-def nav_fragment(key_ns="side"):
+def set_current_by_index(idx: int):
+    ok = ordered_keys()
+    if not ok:
+        return
+    st.session_state.current_key = ok[idx % len(ok)]
 
-    # exit if there are no images uploaded
-    if not ordered_keys():
+
+def nav_fragment(key_ns="side"):
+    ok = ordered_keys()
+    if not ok:
         st.warning("Upload an image in **Upload data** first.")
         return
 
-    # show which image is displayed
-    k = st.session_state.current_key
-    name = st.session_state.images[k]["name"]
-    st.markdown(f"**Image {k+1}/{len(ordered_keys())}:** {name}")
+    names = [st.session_state.images[k]["name"] for k in ok]
+    reck = st.session_state.current_key
+    rec_idx = ok.index(reck) if reck in ok else 0
+    st.markdown(f"**Image {rec_idx+1}/{len(ok)}:** {names[rec_idx]}")
 
-    # buttons for navigating between images
     c1, c2 = st.columns(2)
     if c1.button("◀ Prev", key=f"{key_ns}_prev", use_container_width=True):
-        st.session_state.current_key -= 1
+        set_current_by_index(rec_idx - 1)
         st.rerun()
     if c2.button("Next ▶", key=f"{key_ns}_next", use_container_width=True):
-        st.session_state.current_key += 1
+        set_current_by_index(rec_idx + 1)
         st.rerun()
 
-    # toggle whether the displayed image is rendered with or without mask overlay
     st.toggle("Show mask overlay", key="show_overlay", value=True)
-
-    # show what action is performed when the image is clicked
-    mode = st.session_state[f"interaction_mode"]
-    if mode == "Assign class":
-        current_class = st.session_state[f"side_current_class"]
-        mode = f"{mode} (**{current_class}**)"
-    st.caption(f"Current click action: {mode}")
 
 
 @st.fragment
@@ -337,14 +334,14 @@ def cellpose_actions_fragment():
         # We use a small form so changing values doesn't trigger reruns mid-typing
         with st.form("cellpose_hparams_form", clear_on_submit=False):
             # Channels (two ints)
-            c1 = st.number_input(
+            st.number_input(
                 "Channel 1",
                 value=st.session_state.get("cp_ch1", 0),
                 step=1,
                 format="%d",
                 key="cp_ch1",
             )
-            c2 = st.number_input(
+            st.number_input(
                 "Channel 2",
                 value=st.session_state.get("cp_ch2", 0),
                 step=1,
@@ -401,9 +398,7 @@ def cellpose_actions_fragment():
 
             cols = st.columns([1, 1])
             with cols[0]:
-                submitted = st.form_submit_button(
-                    "Apply changes", use_container_width=True
-                )
+                st.form_submit_button("Apply changes", use_container_width=True)
             with cols[1]:
                 if st.form_submit_button("Reset defaults", use_container_width=True):
                     _reset_cellpose_hparams_to_defaults()
@@ -416,10 +411,7 @@ def cellpose_actions_fragment():
 def box_tools_fragment(key_ns="side"):
     rec = current()
     row = st.container()
-    (
-        c1,
-        c2,
-    ) = row.columns([1, 1])
+    c1, c2 = row.columns([1, 1])
 
     if c1.button("Draw box", use_container_width=True, key=f"{key_ns}_draw_boxes"):
         st.session_state[f"interaction_mode"] = "Draw box"
@@ -430,10 +422,7 @@ def box_tools_fragment(key_ns="side"):
         st.rerun()
 
     row = st.container()
-    (
-        c1,
-        c2,
-    ) = row.columns([1, 1])
+    c1, c2 = row.columns([1, 1])
 
     if c1.button(
         "Remove all boxes", use_container_width=True, key=f"{key_ns}_clear_boxes"
@@ -642,7 +631,7 @@ def display_and_interact_fragment(key_ns="edit", mode_ns="side", scale=1.5):
                 st.session_state["edit_canvas_nonce"] += 1
                 st.rerun()
 
-    # ---- Draw box
+    # click and hold to draw boxes on the image
     elif mode == "Draw box":
         bg = Image.fromarray(display_for_ui).convert("RGB")
         initial_json = boxes_to_fabric_rects(rec["boxes"], scale=scale)
@@ -690,7 +679,7 @@ def display_and_interact_fragment(key_ns="edit", mode_ns="side", scale=1.5):
             if added_any:
                 st.rerun()
 
-    # ---- Remove mask
+    # click a mask in the image to remove the mask
     elif mode == "Remove mask":
         click = streamlit_image_coordinates(
             display_for_ui, key=f"{key_ns}_rm", width=disp_w
@@ -730,6 +719,7 @@ def display_and_interact_fragment(key_ns="edit", mode_ns="side", scale=1.5):
                         rec["last_click_xy"] = (x, y)
                         st.rerun()
 
+    # click on a box in the image to remove the box
     elif mode == "Remove box":
         # draw on full-res base_img with original box coords
         overlay = draw_boxes_overlay(base_img, rec["boxes"], alpha=0.25, outline_px=2)
@@ -751,6 +741,7 @@ def display_and_interact_fragment(key_ns="edit", mode_ns="side", scale=1.5):
                 rec["boxes"].pop(hits[-1])
                 st.rerun()
 
+    # click on a mask in the image to assign it the current class
     elif mode == "Assign class":
         click = streamlit_image_coordinates(
             display_for_ui, key=f"{key_ns}_class_click", width=disp_w

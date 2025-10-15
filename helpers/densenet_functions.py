@@ -11,7 +11,6 @@ from tensorflow.keras.utils import Sequence
 from tensorflow.keras import layers, models
 from tensorflow.keras.applications import DenseNet121
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.applications.densenet import preprocess_input
 
 # ---- bring in existing app helpers ----
 from helpers.state_ops import ordered_keys
@@ -24,9 +23,7 @@ ss = st.session_state
 # -------------------------------
 
 
-def generate_normalized_cell_patch(
-    image: np.ndarray, mask: np.ndarray, patch_size: int = 64
-):
+def generate_cell_patch(image: np.ndarray, mask: np.ndarray, patch_size: int = 64):
     """takes an image and boolean mask input and a normalized square patch image from the mask"""
 
     im, m = np.asarray(image), np.asarray(mask, bool)
@@ -48,8 +45,6 @@ def generate_normalized_cell_patch(
         crop = crop[..., :3]
 
     crop = resize_with_aspect_ratio(crop, patch_size=patch_size)
-    crop = normalize_image(crop)
-
     return crop.astype(np.float32)
 
 
@@ -197,6 +192,7 @@ def random_augmentation_pipeline(image_np, num_transforms=3):
 
 
 def build_densenet(input_shape=(64, 64, 3), num_classes=2, base_trainable=False):
+    # Fresh DenseNet (no ImageNet normalization dependency)
     base = DenseNet121(weights="imagenet", include_top=False, input_shape=input_shape)
     base.trainable = base_trainable
     x_in = layers.Input(shape=input_shape)
@@ -216,6 +212,13 @@ def build_densenet(input_shape=(64, 64, 3), num_classes=2, base_trainable=False)
 # -------------------------------
 #  Densenet121 training: image loading
 # -------------------------------
+
+
+def generate_labelled_patches_for_training(patch_size):
+    """
+    Build (X, y, classes) directly from the app's uploaded images + user labels.
+    Uses the same extract_masked_cell_patch_from_image + label dicts as classification.
+    """
 
 
 @dataclass
@@ -324,76 +327,6 @@ def load_labeled_patches_from_session(patch_size: int = 64):
     return X, y, all_classes
 
 
-def densenet_train_fragment():
-    """Runs the full DenseNet training pipeline when the button is clicked."""
-    go = st.button("Fine tune Densenet121", use_container_width=True, type="primary")
-    if not go:
-        return
-
-    # Read options from session
-    input_size = int(ss.get("dn_input_size", 64))
-    batch_size = int(ss.get("dn_batch_size", 32))
-    base_trainable = bool(ss.get("dn_base_trainable", False))
-    epochs = int(ss.get("dn_max_epoch", 100))
-    val_split = float(ss.get("dn_val_split", 0.2))
-
-    # Load data (heavy)
-    X, y, classes = load_labeled_patches_from_session(patch_size=input_size)
-    if X.shape[0] < 2 or len(np.unique(y)) < 2:
-        st.warning("Need at least 2 samples and 2 classes. Add more labeled cells.")
-        return
-
-    # Split
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=val_split, stratify=y, random_state=42
-    )
-
-    # Data generators
-    train_gen = AugSequence(
-        X_train,
-        y_train,
-        batch_size=batch_size,
-        num_transforms=3,
-        shuffle=True,
-        target_size=(input_size, input_size),
-    )
-    val_gen = AugSequence(
-        X_val,
-        y_val,
-        batch_size=batch_size,
-        num_transforms=1,
-        shuffle=False,
-        target_size=(input_size, input_size),
-    )
-
-    # Class weights
-    class_weights = compute_class_weight(
-        class_weight="balanced", classes=np.arange(len(classes)), y=y
-    )
-    class_weights_dict = {i: float(w) for i, w in enumerate(class_weights)}
-
-    # Build model
-    model = build_densenet(
-        input_shape=(input_size, input_size, 3),
-        num_classes=len(classes),
-        base_trainable=base_trainable,
-    )
-
-    # Train
-    es = EarlyStopping(
-        monitor="val_loss", patience=15, restore_best_weights=True, verbose=1
-    )
-    with st.spinner("Training DenseNet…"):
-        history = model.fit(
-            train_gen,
-            validation_data=val_gen,
-            epochs=epochs,
-            callbacks=[es],
-            class_weight=class_weights_dict,
-            verbose=0,
-        )
-
-
 class AugSequence(Sequence):
     def __init__(
         self, X, y, batch_size=32, num_transforms=3, shuffle=True, target_size=None
@@ -461,26 +394,24 @@ def classify_cells_with_densenet(rec: dict) -> None:
     if not isinstance(M, np.ndarray) or M.ndim != 2 or not np.any(M):
         return
 
-    # convert mask integer values to boolean masks
-    ids = [int(v) for v in np.unique(M) if v != 0]
-    patches, keep_ids = [], []
-    for iid in ids:
-        patches.append(
-            generate_normalized_cell_patch(rec["image"], M == iid, patch_size=64)
-        )
-        # keep track of id for mapping back to rec["labels"]
-        keep_ids.append(iid)
-
-    # classify cell patches
-    X = np.stack(patches, axis=0)
-    preds = model.predict(X, verbose=0).argmax(axis=1)
-
-    # add class labels to rec
-    labels = {}
     all_classes = [c for c in ss.get("all_classes", []) if c != "Remove label"] or [
         "class0",
         "class1",
     ]
+
+    # extract the individual masks
+    ids = [int(v) for v in np.unique(M) if v != 0]
+    patches, keep_ids = [], []
+    for iid in ids:
+        patches.append(
+            normalize_image(generate_cell_patch(rec["image"], M == iid, patch_size=64))
+        )
+        keep_ids.append(iid)
+
+    X = np.stack(patches, axis=0)
+    preds = model.predict(X, verbose=0).argmax(axis=1)
+
+    labels = rec.setdefault("labels", {})
     for iid, cls_idx in zip(keep_ids, preds):
         idx = int(cls_idx)
         name = all_classes[idx] if idx < len(all_classes) else str(idx)

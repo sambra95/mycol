@@ -16,7 +16,7 @@ from sklearn.metrics import r2_score, mean_absolute_error
 
 
 # --- small helper: normalization similar to your earlier pipeline ---
-def _normalize_for_cellpose(image: np.ndarray) -> np.ndarray:
+def normalize_image(image: np.ndarray) -> np.ndarray:
     im = image.astype(np.float32)
     mean_val = float(np.mean(im)) if im.size else 0.0
     if mean_val <= 0:
@@ -40,7 +40,7 @@ def preprocess_image_for_cellpose(rec):
             f"Unsupported image shape {img.shape}; expected (H,W) or (H,W,C)"
         )
 
-    im_in = _normalize_for_cellpose(img)
+    im_in = normalize_image(img)
 
     return im_in
 

@@ -567,6 +567,7 @@ def _image_display(rec, scale):
     return base_img, display_for_ui, disp_w, disp_h
 
 
+@st.fragment
 def display_and_interact_fragment(key_ns="edit", mode_ns="side", scale=1.5):
 
     rec = current()
@@ -627,7 +628,7 @@ def display_and_interact_fragment(key_ns="edit", mode_ns="side", scale=1.5):
                     added_any = True
             if added_any:
                 st.session_state["edit_canvas_nonce"] += 1
-                st.rerun()
+                st.rerun(scope="fragment")
 
     # click and hold to draw boxes on the image
     elif mode == "Draw box":
@@ -675,7 +676,7 @@ def display_and_interact_fragment(key_ns="edit", mode_ns="side", scale=1.5):
                 rec["boxes"].append(box)
                 added_any = True
             if added_any:
-                st.rerun()
+                st.rerun(scope="fragment")
 
     # click a mask in the image to remove the mask
     elif mode == "Remove mask":
@@ -715,7 +716,7 @@ def display_and_interact_fragment(key_ns="edit", mode_ns="side", scale=1.5):
                             rec["labels"] = {}
                         rec["masks"] = inst
                         rec["last_click_xy"] = (x, y)
-                        st.rerun()
+                        st.rerun(scope="fragment")
 
     # click on a box in the image to remove the box
     elif mode == "Remove box":

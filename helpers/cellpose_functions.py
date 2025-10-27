@@ -360,8 +360,8 @@ def finetune_cellpose_from_records(
     recs: dict,
     base_model: str,
     epochs=100,
-    learning_rate=0.00005,
-    weight_decay=0.1,
+    learning_rate=0.1,
+    weight_decay=0.0001,
     nimg_per_epoch=32,
     channels=[0, 0],
 ):

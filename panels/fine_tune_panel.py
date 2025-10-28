@@ -29,12 +29,15 @@ ss = st.session_state
 
 
 def _densenet_options(key_ns="train_densenet"):
-    """Light controls – lives outside fragments so changing options refreshes summary."""
+    """Light controls - lives outside fragments so changing options refreshes summary."""
     st.header("Fine-tune a DenseNet classifier")
 
     if not ordered_keys():
         st.info("Upload data and add labels in the other panels first.")
         return False
+
+    # show information about the training set
+    densenet_summary_fragment()
 
     c1, c2, c4 = st.columns(3)
     ss.setdefault("dn_input_size", 64)
@@ -107,7 +110,6 @@ def densenet_train_fragment():
 def render_densenet_train_panel(key_ns: str = "train_densenet"):
     if not _densenet_options(key_ns):
         return
-    densenet_summary_fragment()
     densenet_train_fragment()
 
 
@@ -121,6 +123,16 @@ def _cellpose_options(key_ns="train_cellpose"):
         st.info("Upload data and label masks first.")
         return False
 
+    # --- show dataset stats ---
+    n_images, n_masks = len(ordered_keys()), 0
+    for k in ordered_keys():
+        rec = st.session_state["images"][k]
+        M = rec.get("masks")
+        if isinstance(M, np.ndarray) and M.ndim == 2:
+            n_masks += int((M > 0).sum() > 0)  # count one mask per instance
+    st.info(f"Training set: {n_masks} labeled masks across {n_images} images.")
+
+    # --- show training options ---
     c1, c2, c3, c4 = st.columns(4)
 
     # Defaults
@@ -192,16 +204,6 @@ def _cellpose_options(key_ns="train_cellpose"):
                 ss["cp_grid_min_size"],
                 help="Examples: 0, 100, 200",
             )
-
-    # --- show dataset stats ---
-    n_images, n_masks = len(ordered_keys()), 0
-    for k in ordered_keys():
-        rec = st.session_state["images"][k]
-        M = rec.get("masks")
-        if isinstance(M, np.ndarray) and M.ndim == 2:
-            n_masks += int((M > 0).sum() > 0)  # count one mask per instance
-
-    st.info(f"Training set: {n_masks} labeled masks across {n_images} images.")
 
     return True
 

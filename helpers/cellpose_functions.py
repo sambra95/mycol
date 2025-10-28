@@ -201,13 +201,8 @@ def _plot_losses(train_losses, test_losses):
     plt.legend()
     plt.grid(True, alpha=0.3)
 
-    # Render first
-    st.pyplot(fig, use_container_width=True)
-
     # 🔸 Save to session state for later download/use
     _save_fig_to_session(fig, key_prefix="cp_losses", dpi=300)
-
-    plt.close(fig)
 
 
 def _count_instances(lbl):
@@ -342,13 +337,8 @@ def compare_models_mean_iou_plot(
     fig.suptitle("Original vs Fine-tuned Model Comparison", fontsize=13)
     plt.tight_layout()
 
-    # Render first
-    st.pyplot(fig, use_container_width=True)
-
     # 🔸 Save to session state for later download/use
     _save_fig_to_session(fig, key_prefix="cp_compare_iou", dpi=300)
-
-    plt.close(fig)
 
 
 # -----------------------------------------------------#

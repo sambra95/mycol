@@ -314,9 +314,11 @@ def nav_fragment(key_ns="side"):
     if c2.button("Next ▶", key=f"{key_ns}_next", use_container_width=True):
         set_current_by_index(rec_idx + 1)
         st.rerun()
-
-    st.toggle("Show mask overlay", key="show_overlay", value=True)
-    st.toggle("Show normalized image", key="show_normalized", value=False)
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        st.toggle("Show masks", key="show_overlay", value=True)
+    with col2:
+        st.toggle("Normalize image", key="show_normalized", value=False)
 
 
 @st.fragment

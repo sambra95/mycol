@@ -462,14 +462,9 @@ def evaluate_fine_tinued_densenet(history, val_gen, classes):
         history.history.get("val_loss", []),
         metrics=metrics_dict,
     )
-
-    st.pyplot(fig, use_container_width=True)
-
     # plot confusion matrix on validation set
     cm = confusion_matrix(yv, y_pred, labels=np.arange(len(classes)))
     fig = _plot_confusion_matrix(cm, classes, normalize=False)
-
-    st.pyplot(fig, use_container_width=True)
 
 
 # -------------------------------

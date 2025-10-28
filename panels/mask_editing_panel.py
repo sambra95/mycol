@@ -44,10 +44,9 @@ def render_segment_sidebar(*, key_ns: str = "side"):
             ):
                 _batch_segment_and_refresh()
 
-        with st.popover(
+        with st.expander(
             "Edit Cellpose Hyperparameters",
-            use_container_width=True,
-            help="Change Cellpose prediction parameters here.",
+            expanded=False,
         ):
             cellpose_hyperparameters_fragment()
 
@@ -85,4 +84,4 @@ def render_classify_sidebar(*, key_ns: str = "side"):
 
 def render_main(*, key_ns: str = "edit"):
 
-    display_and_interact_fragment(key_ns=key_ns, mode_ns="side", scale=1.5)
+    display_and_interact_fragment(key_ns=key_ns, scale=1.5)

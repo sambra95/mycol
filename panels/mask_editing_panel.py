@@ -16,6 +16,10 @@ from helpers.classifying_functions import (
     class_manage_fragment,
 )
 
+from helpers.upload_download_functions import (
+    build_masks_images_zip,
+    build_patchset_zip_from_session,
+)
 
 # ---------- Rendering functions ----------
 
@@ -85,3 +89,39 @@ def render_classify_sidebar(*, key_ns: str = "side"):
 def render_main(*, key_ns: str = "edit"):
 
     display_and_interact_fragment(key_ns=key_ns, scale=1.5)
+
+
+def render_download_button():
+
+    if not ordered_keys():
+        st.info("Upload data and label masks first.")
+        return False
+
+    images = st.session_state.get("images", {})
+    ok = ordered_keys() if images else []
+
+    # Masks & images (with overlay options)
+    def masks_images_zip(images, ok, overlay, counts):
+        return build_masks_images_zip(images, ok, overlay, counts) or b""
+
+    with st.container(border=True):
+        st.header("Download dataset:")
+        with st.popover(label="Download options", use_container_width=True):
+            c1, c2 = st.columns(2)
+            overlay = c1.checkbox(
+                "Include colored mask overlays", True, key="dl_include_overlay"
+            )
+            counts = c2.checkbox(
+                "Overlay per-image class counts", False, key="dl_include_counts"
+            )
+
+        mz = masks_images_zip(images, ok, overlay, counts) if ok else b""
+        st.download_button(
+            "Download dataset (zip)",
+            mz,
+            "masks_and_images.zip",
+            "application/zip",
+            disabled=not mz,
+            use_container_width=True,
+            key="dl_masks_images_zip_single",
+        )

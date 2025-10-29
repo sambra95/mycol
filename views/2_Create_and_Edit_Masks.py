@@ -4,10 +4,6 @@ from panels import mask_editing_panel
 
 common_boot()
 
-st.title("🎭 Create and Edit Segmentation Masks")
-
-st.divider()
-
 # Page-specific sidebar
 with st.sidebar:
 
@@ -17,6 +13,8 @@ with st.sidebar:
         mask_editing_panel.render_segment_sidebar(key_ns="edit_side")
     with classifying_tab:
         mask_editing_panel.render_classify_sidebar(key_ns="classify_side")
+
+    mask_editing_panel.render_download_button()
 
 # Page main content
 mask_editing_panel.render_main(key_ns="edit")

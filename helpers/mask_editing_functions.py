@@ -119,6 +119,7 @@ def _read_cellpose_hparams_from_state():
         cellprob_threshold=float(st.session_state.get("cp_cellprob_threshold", -0.2)),
         flow_threshold=float(st.session_state.get("cp_flow_threshold", 0.4)),
         min_size=int(st.session_state.get("cp_min_size", 0)),
+        niter=int(st.session_state.get("niter", 0)),
     )
 
 
@@ -363,6 +364,16 @@ def cellpose_hyperparameters_fragment():
             help="Remove masks smaller than this area.",
         )
 
+        niter = st.number_input(
+            "Niter",
+            value=int(st.session_state.get("niter", 0)),
+            min_value=0,
+            max_value=1000,
+            step=10,
+            key="cp_niter",
+            help="Higher values favour longer, stringier, cells.",
+        )
+
         cols = st.columns([1, 1])
         with cols[0]:
             st.form_submit_button("Apply changes", use_container_width=True)
@@ -519,7 +530,7 @@ def _image_display(rec, scale):
     has_instances = isinstance(M, np.ndarray) and M.ndim == 2 and M.any()
 
     if st.session_state.get("show_overlay", False) and has_instances:
-        labels = st.session_state.setdefault("all_classes", ["Remove label"])
+        labels = st.session_state.setdefault("all_classes", ["No label"])
         palette = palette_from_emojis(labels)
         classes_map = classes_map_from_labels(rec["masks"], rec["labels"])
         base_img = composite_over_by_class(
@@ -543,8 +554,8 @@ def display_and_interact_fragment(key_ns="edit", scale=1.5):
         st.warning("Upload an image in **Upload data** first.")
         return
 
-    st.session_state.setdefault("all_classes", ["Remove label"])
-    st.session_state.setdefault("side_current_class", "Remove label")
+    st.session_state.setdefault("all_classes", ["No label"])
+    st.session_state.setdefault("side_current_class", "No label")
 
     # --- header: title + controls (Prev / Next / toggles) ---
     ok = ordered_keys()
@@ -557,9 +568,17 @@ def display_and_interact_fragment(key_ns="edit", scale=1.5):
         st.markdown(
             "<br><br><br>", unsafe_allow_html=True
         )  # filler to move buttons further down the screen
-        if st.button("◀ Prev", key=f"{key_ns}_prev_main", use_container_width=True):
+        if st.button(
+            "◀ Prev",
+            key=f"{key_ns}_prev_main",
+            use_container_width=True,
+        ):
             set_current_by_index(rec_idx - 1)
             st.rerun(scope="fragment")
+        st.markdown("<br>", unsafe_allow_html=True)  # filler
+
+        st.toggle("Show masks", key="show_overlay", value=True)
+        st.toggle("Normalize image", key="show_normalized", value=False)
     with c2:
         st.info(f"**Image {rec_idx+1}/{len(ok)}:** {names[rec_idx]}")
 
@@ -758,7 +777,7 @@ def display_and_interact_fragment(key_ns="edit", scale=1.5):
                     iid = int(M[y0, x0])
                     if iid > 0:
                         cur_class = st.session_state.get("side_current_class")
-                        if cur_class == "Remove label":
+                        if cur_class == "No label":
                             rec.setdefault("labels", {}).pop(iid, None)
                         else:
                             rec.setdefault("labels", {})[iid] = cur_class
@@ -772,8 +791,10 @@ def display_and_interact_fragment(key_ns="edit", scale=1.5):
         st.markdown(
             "<br><br><br>", unsafe_allow_html=True
         )  # filler to move buttons further down the screen
-        if st.button("Next ▶", key=f"{key_ns}_next_main", use_container_width=True):
+        if st.button(
+            "Next ▶",
+            key=f"{key_ns}_next_main",
+            use_container_width=True,
+        ):
             set_current_by_index(rec_idx + 1)
             st.rerun(scope="fragment")
-        st.toggle("Show masks", key="show_overlay", value=True)
-        st.toggle("Normalize image", key="show_normalized", value=False)

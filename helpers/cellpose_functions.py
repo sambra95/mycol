@@ -425,11 +425,11 @@ def download_cellpose_training_record():
     )
     params = dict(
         timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        base_model=ss.get("cp_base_model", "cyto2"),
-        epochs=int(ss.get("cp_max_epoch", 100)),
-        learning_rate=float(ss.get("cp_lr", 5e-5)),
-        weight_decay=float(ss.get("cp_wd", 0.1)),
-        batch_size=int(ss.get("cp_batch_size", 1)),
+        base_model=ss.get("cp_base_model"),
+        epochs=int(ss.get("cp_max_epoch")),
+        learning_rate=float(ss.get("cp_learning_rate")),
+        weight_decay=float(ss.get("cp_weight_decay")),
+        batch_size=int(ss.get("cp_batch_size")),
         images_used=len(ok),
         masks_used=n_masks,
     )

@@ -182,41 +182,41 @@ def _cellpose_options(key_ns="train_cellpose"):
     # Defaults
     ss.setdefault("cp_base_model", "cyto2")
     ss.setdefault("cp_max_epoch", 100)
-    ss.setdefault("cp_lr", 0.1)
-    ss.setdefault("cp_wd", 5e-4)
-    ss.setdefault("cp_nimg", 32)
+    ss.setdefault("cp_learning_rate", 0.1)
+    ss.setdefault("cp_weight_decay", 1e-4)
+    ss.setdefault("cp_batch_size", 32)
 
     ss["cp_base_model"] = c1.selectbox(
         "Base model",
         options=["cyto", "cyto2", "cyto3", "nuclei", "scratch"],
-        index=["cyto2", "cyto", "cyto3", "nuclei", "scratch"].index(
+        index=["cyto", "cyto2", "cyto3", "nuclei", "scratch"].index(
             ss["cp_base_model"]
         ),  # this line sets the
     )
     ss["cp_max_epoch"] = c2.number_input(
         "Max epochs", 1, 1000, int(ss["cp_max_epoch"]), step=10
     )
-    ss["cp_lr"] = c3.number_input(
+    ss["cp_learning_rate"] = c3.number_input(
         "Learning rate",
         min_value=1e-8,
-        max_value=1.0,
-        value=float(ss["cp_lr"]),
+        max_value=10.0,
+        value=float(ss["cp_learning_rate"]),
         format="%.5f",
     )
-    ss["cp_wd"] = c1.number_input(
+    ss["cp_weight_decay"] = c1.number_input(
         "Weight decay",
         min_value=0.0,
         max_value=1.0,
-        value=float(ss["cp_wd"]),
-        step=1e-6,
+        value=float(ss["cp_weight_decay"]),
+        step=1e-8,
         format="%.8f",  # more decimals prevents snapping to 0
-        key="cp_wd_input",
+        key="cp_weight_decay_input",
     )
 
-    ss["cp_nimg"] = c2.selectbox(
+    ss["cp_batch_size"] = c2.selectbox(
         "Batch size",
         options=[8, 16, 32, 64],
-        index=[8, 16, 32, 64].index(ss["cp_nimg"]),
+        index=[8, 16, 32, 64].index(ss["cp_batch_size"]),
         key="cellpose_batch_size",
     )
 
@@ -274,11 +274,11 @@ def cellpose_train_fragment():
 
     recs = {k: st.session_state["images"][k] for k in ordered_keys()}
     base_model = ss.get("cp_base_model", "cyto2")
-    epochs = int(ss.get("cp_max_epoch", 100))
-    lr = float(ss.get("cp_lr", 5e-5))
-    wd = float(ss.get("cp_wd", 0.1))
-    nimg = int(ss.get("cp_nimg", 32))
-    channels = ss.get("cellpose_channels", [0, 0])
+    epochs = int(ss.get("cp_max_epoch"))
+    lr = float(ss.get("cp_learning_rate"))
+    wd = float(ss.get("cp_weight_decay"))
+    nimg = int(ss.get("cp_batch_size"))
+    channels = ss.get("cellpose_channels")
 
     train_losses, test_losses, model_name = finetune_cellpose_from_records(
         recs,

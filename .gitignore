@@ -9,12 +9,12 @@ secret.txt
 *.log
 *.tif
 *.npy
-.DS_Store
+**.DS_Store
 
 # Ignore compiled Python files
 __pycache__/
 *.pyc
-**/.DS_Store
+
 
 # Ignore environment files
 

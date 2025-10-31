@@ -106,8 +106,8 @@ def _batch_segment_and_refresh():
 def _read_cellpose_hparams_from_state():
     """calls hparam values from session state"""
     # Build kwargs matching segment_rec_with_cellpose signature
-    ch1 = int(st.session_state.get("cp_ch1", 0))
-    ch2 = int(st.session_state.get("cp_ch2", 0))
+    ch1 = int(st.session_state.get("cp_ch1"))
+    ch2 = int(st.session_state.get("cp_ch2"))
     diameter = st.session_state.get("cp_diameter", None)
     # ensure None if 0.0 when Auto
     if st.session_state.get("cp_diam_mode", "Auto (None)") == "Auto (None)":
@@ -116,10 +116,10 @@ def _read_cellpose_hparams_from_state():
     return dict(
         channels=(ch1, ch2),
         diameter=diameter,
-        cellprob_threshold=float(st.session_state.get("cp_cellprob_threshold", -0.2)),
-        flow_threshold=float(st.session_state.get("cp_flow_threshold", 0.4)),
-        min_size=int(st.session_state.get("cp_min_size", 0)),
-        niter=int(st.session_state.get("niter", 0)),
+        cellprob_threshold=float(st.session_state.get("cp_cellprob_threshold")),
+        flow_threshold=float(st.session_state.get("cp_flow_threshold")),
+        min_size=int(st.session_state.get("cp_min_size")),
+        niter=int(st.session_state.get("niter")),
     )
 
 
@@ -300,86 +300,77 @@ def set_current_by_index(idx: int):
 @st.fragment
 def cellpose_hyperparameters_fragment():
 
-    # We use a small form so changing values doesn't trigger reruns mid-typing
-    with st.form("cellpose_hparams_form", clear_on_submit=False):
-        # Channels (two ints)
-        st.number_input(
-            "Channel 1",
-            value=st.session_state.get("cp_ch1", 0),
-            step=1,
-            format="%d",
-            key="cp_ch1",
-        )
-        st.number_input(
-            "Channel 2",
-            value=st.session_state.get("cp_ch2", 0),
-            step=1,
-            format="%d",
-            key="cp_ch2",
+    # Channels (two ints)
+    st.number_input(
+        "Channel 1",
+        value=st.session_state.get("cp_ch1", 0),
+        step=1,
+        format="%d",
+        key="cp_ch1",
+    )
+    st.number_input(
+        "Channel 2",
+        value=st.session_state.get("cp_ch2", 0),
+        step=1,
+        format="%d",
+        key="cp_ch2",
+    )
+
+    # Diameter: auto (None) or manual
+    diam_mode = st.selectbox(
+        "Diameter mode",
+        ["Auto (None)", "Manual"],
+        index=(
+            0
+            if st.session_state.get("cp_diam_mode", "Auto (None)") == "Auto (None)"
+            else 1
+        ),
+        key="cp_diam_mode",
+        help="Leave as Auto for Cellpose to estimate diameter, or set a manual value.",
+    )
+    diam_val = None
+    if diam_mode == "Manual":
+        diam_val = st.number_input(
+            "Manual diameter (pixels)",
+            min_value=0.0,
+            value=float(st.session_state.get("cp_diameter", 0.0)),
+            step=1.0,
+            key="cp_diameter",
         )
 
-        # Diameter: auto (None) or manual
-        diam_mode = st.selectbox(
-            "Diameter mode",
-            ["Auto (None)", "Manual"],
-            index=(
-                0
-                if st.session_state.get("cp_diam_mode", "Auto (None)") == "Auto (None)"
-                else 1
-            ),
-            key="cp_diam_mode",
-            help="Leave as Auto for Cellpose to estimate diameter, or set a manual value.",
-        )
-        diam_val = None
-        if diam_mode == "Manual":
-            diam_val = st.number_input(
-                "Manual diameter (pixels)",
-                min_value=0.0,
-                value=float(st.session_state.get("cp_diameter", 0.0) or 0.0),
-                step=1.0,
-                key="cp_diameter",
-            )
+    # Thresholds & size
+    cellprob = st.number_input(
+        "Cellprob threshold",
+        value=float(st.session_state.get("cp_cellprob_threshold")),
+        step=0.1,
+        key="cp_cellprob_threshold",
+        help="Higher -> fewer cells.",
+    )
+    flowthr = st.number_input(
+        "Flow threshold",
+        value=float(st.session_state.get("cp_flow_threshold")),
+        step=0.1,
+        key="cp_flow_threshold",
+        help="Lower -> more permissive flows.",
+    )
+    min_size = st.number_input(
+        "Minimum size (pixels)",
+        value=int(st.session_state.get("cp_min_size")),
+        min_value=0,
+        step=10,
+        key="cp_min_size",
+        help="Remove masks smaller than this area.",
+    )
 
-        # Thresholds & size
-        cellprob = st.number_input(
-            "Cellprob threshold",
-            value=float(st.session_state.get("cp_cellprob_threshold", -0.2)),
-            step=0.1,
-            key="cp_cellprob_threshold",
-            help="Higher -> fewer cells. Default -0.2",
-        )
-        flowthr = st.number_input(
-            "Flow threshold",
-            value=float(st.session_state.get("cp_flow_threshold", 0.4)),
-            step=0.1,
-            key="cp_flow_threshold",
-            help="Lower -> more permissive flows. Default 0.4",
-        )
-        min_size = st.number_input(
-            "Minimum size (pixels)",
-            value=int(st.session_state.get("cp_min_size", 0)),
-            min_value=0,
-            step=10,
-            key="cp_min_size",
-            help="Remove masks smaller than this area.",
-        )
-
-        niter = st.number_input(
-            "Niter",
-            value=int(st.session_state.get("niter", 0)),
-            min_value=0,
-            max_value=1000,
-            step=10,
-            key="cp_niter",
-            help="Higher values favour longer, stringier, cells.",
-        )
-
-        cols = st.columns([1, 1])
-        with cols[0]:
-            st.form_submit_button("Apply changes", use_container_width=True)
-        with cols[1]:
-            if st.form_submit_button("Reset defaults", use_container_width=True):
-                _reset_cellpose_hparams_to_defaults()
+    niter = st.number_input(
+        "Niter",
+        value=int(st.session_state["cp_niter"]),
+        min_value=0,
+        max_value=1000,
+        step=10,
+        key="cp_niter_button",
+        help="Higher values favour longer, stringier, cells.",
+    )
 
     # sync diameter to None when Auto selected
     if st.session_state.get("cp_diam_mode", "Auto (None)") == "Auto (None)":

@@ -32,7 +32,7 @@ def ensure_global_state() -> None:
     ss.setdefault("cp_ch2", 0)
     ss.setdefault("cp_min_size", 0)
     ss.setdefault("cp_niter", 0)
-    ss.setdefault("cp_flow_threshold", 0.4)
+    ss.setdefault("cp_flow_threshold", 0.3)
     ss.setdefault("cp_cellprob_threshold", 0.2)
     ss.setdefault("cp_diameter", 0.0)
 

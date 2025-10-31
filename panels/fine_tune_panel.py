@@ -130,25 +130,22 @@ def show_densenet_training_plots(height: int = 600):
             st.empty()
             return
 
-        st.header("DenseNet Training Summary")
+        else:
 
-        # button to download fine-tuned model, training data and training stats
-        download_densenet_training_record()
+            st.header("DenseNet Training Summary")
 
-        if k1 in st.session_state:
+            # button to download fine-tuned model, training data and training stats
+            download_densenet_training_record()
+
             st.image(
                 st.session_state[k1],
                 use_container_width=True,
             )
-        else:
-            st.empty()
-        if k2 in st.session_state:
+
             st.image(
                 st.session_state[k2],
                 use_container_width=True,
             )
-        else:
-            st.empty()
 
 
 # ========== Cellpose: options + training ==========
@@ -430,7 +427,7 @@ def show_cellpose_training_plots(height: int = 600):
     """Render saved Cellpose plots from session state (if available)."""
     k1, k2 = "cp_losses_png", "cp_compare_iou_png"
     with st.container(border=True, height=height):
-        if (k1 not in st.session_state) and (k2 not in st.session_state):
+        if (k1 not in st.session_state) or (k2 not in st.session_state):
             st.header("Cellpose Training Summary")
             st.info("No fine-tuning data to show.")
             return

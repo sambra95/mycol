@@ -1,19 +1,16 @@
 # panels/train_densenet.py
 import random
-
 import numpy as np
 import streamlit as st
 import cv2
 import matplotlib.pyplot as plt
-import io as IO
 from datetime import datetime
-import numpy as np
 import pandas as pd
 from PIL import Image
 import io
 from zipfile import ZipFile, ZIP_DEFLATED
-from datetime import datetime
-import pandas as pd
+import os
+import tempfile
 
 from tensorflow.keras.utils import Sequence
 from tensorflow.keras import layers, models
@@ -22,7 +19,7 @@ from tensorflow.keras.optimizers import Adam
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.callbacks import EarlyStopping
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score
+from sklearn.metrics import accuracy_score, confusion_matrix
 
 
 # ---- bring in existing app helpers ----
@@ -467,16 +464,16 @@ def evaluate_fine_tuned_densenet(history, val_gen, classes):
 
     # 3) predictions as indices
     yprobs = st.session_state["densenet_model"].predict(Xv, verbose=0)
-    st.session_state["y_pred"] = np.argmax(yprobs, axis=1)
+    y_pred = np.argmax(yprobs, axis=1)
 
     st.info(
         "Model stored in session. You can use it immediately from the **Classify cells** panel."
     )
 
     # 4) metrics (macro often more informative; weighted also shown)
-    acc = accuracy_score(y_true, st.session_state["y_pred"])
+    acc = accuracy_score(y_true, y_pred)
     prec_m, rec_m, f1_m, _ = precision_recall_fscore_support(
-        y_true, st.session_state["y_pred"], average="macro", zero_division=0
+        y_true, y_pred, average="macro", zero_division=0
     )
 
     # 5) plots
@@ -490,20 +487,8 @@ def evaluate_fine_tuned_densenet(history, val_gen, classes):
         },  # keep your bar chart concise
     )
 
-    cm = confusion_matrix(
-        y_true, st.session_state["y_pred"], labels=np.arange(len(classes))
-    )
+    cm = confusion_matrix(y_true, y_pred, labels=np.arange(len(classes)))
     _ = _plot_confusion_matrix(cm, classes, normalize=False)
-
-    # (optional) quick text report in the app for sanity-checking
-    st.code(
-        classification_report(
-            y_true,
-            st.session_state["y_pred"],
-            target_names=list(classes),
-            zero_division=0,
-        )
-    )
 
 
 # -------------------------------
@@ -638,7 +623,7 @@ def build_patchset_zip_from_session(patch_size: int = 64) -> bytes | None:
     if X.shape[0] == 0:
         return None
 
-    buf, rows = IO.BytesIO(), []
+    buf, rows = io.BytesIO(), []
     ok = ordered_keys()
     parent_names = [st.session_state["images"][k]["name"].rsplit(".", 1)[0] for k in ok]
     patch_per_img = int(np.ceil(X.shape[0] / len(ok))) if ok else X.shape[0]
@@ -653,49 +638,40 @@ def build_patchset_zip_from_session(patch_size: int = 64) -> bytes | None:
                 if 0 <= label_idx < len(classes)
                 else f"class{label_idx}"
             )
-            zf.writestr(f"patches/{fname}", _array_to_png_bytes(X[i]))
+            zf.writestr(f"cell_patches/{fname}", _array_to_png_bytes(X[i]))
             rows.append(
                 {"filename": fname, "label_idx": label_idx, "label": label_name}
             )
         zf.writestr(
-            "labels.csv", pd.DataFrame(rows).to_csv(index=False).encode("utf-8")
+            "cell_patch_labels.csv",
+            pd.DataFrame(rows).to_csv(index=False).encode("utf-8"),
         )
     return buf.getvalue()
 
 
-import io as IO, os, tempfile
-from zipfile import ZipFile, ZIP_DEFLATED
-from datetime import datetime
-import pandas as pd
-import streamlit as st
-
-
 def download_densenet_training_record():
     ss = st.session_state
-    psize = int(ss.get("dn_input_size", 64))
+    psize = int(ss.get("dn_input_size"))
     pzip = build_patchset_zip_from_session(psize)
     if not pzip:
         st.warning("No patches available.")
         return
 
-    with ZipFile(IO.BytesIO(pzip)) as zin:
-        labels = pd.read_csv(IO.BytesIO(zin.read("labels.csv")))
+    with ZipFile(io.BytesIO(pzip)) as zin:
+        labels = pd.read_csv(io.BytesIO(zin.read("cell_patch_labels.csv")))
         params = dict(
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             input_size=psize,
-            epochs=int(ss.get("dn_max_epoch", 100)),
-            batch_size=int(ss.get("dn_batch_size", 32)),
-            val_split=float(ss.get("dn_val_split", 0.2)),
+            epochs=int(ss.get("dn_max_epoch")),
+            batch_size=int(ss.get("dn_batch_size")),
+            val_split=float(ss.get("dn_val_split")),
             patches=len(labels),
             classes=labels["label"].nunique(),
         )
 
-        buf = IO.BytesIO()
+        buf = io.BytesIO()
         with ZipFile(buf, "w", ZIP_DEFLATED) as zout:
             # --- Models ---
-            if ss.get("densenet_model_bytes"):
-                zout.writestr("densenet_model.pt", ss["densenet_model_bytes"])
-
             if ss.get("densenet_model") is not None:
                 # Keras 3: save to a real filepath with .keras extension
                 tmp = tempfile.NamedTemporaryFile(suffix=".keras", delete=False)
@@ -704,7 +680,7 @@ def download_densenet_training_record():
                 try:
                     ss["densenet_model"].save(tmp_path)  # format inferred from ".keras"
                     with open(tmp_path, "rb") as f:
-                        zout.writestr("densenet_model.keras", f.read())
+                        zout.writestr("densenet_finetuned.keras", f.read())
                 finally:
                     try:
                         os.remove(tmp_path)
@@ -713,7 +689,7 @@ def download_densenet_training_record():
 
             # --- Params ---
             zout.writestr(
-                "params.csv",
+                "training_params.csv",
                 pd.Series(params)
                 .rename_axis("parameter")
                 .reset_index(name="value")

@@ -29,6 +29,7 @@ def ensure_global_state() -> None:
     ss.setdefault("cp_ch1", 0)
     ss.setdefault("cp_ch2", 0)
 
+    ss.setdefault("densenet_ckpt_bytes", None)
     ss.setdefault("dn_input_size", 64)
     ss.setdefault("dn_batch_size", 32)
     ss.setdefault("dn_max_epoch", 100)

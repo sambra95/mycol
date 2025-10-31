@@ -13,6 +13,7 @@ import zipfile
 from datetime import datetime
 import pandas as pd
 from helpers.state_ops import ordered_keys
+from pathlib import Path
 
 # -----------------------------------------------------#
 # ---------------- IMAGE PREPROCESSING --------------- #
@@ -423,6 +424,8 @@ def download_cellpose_training_record():
         )
         for k in ok
     )
+
+    # collect training parameters
     params = dict(
         timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         base_model=ss.get("cp_base_model"),
@@ -434,10 +437,20 @@ def download_cellpose_training_record():
         masks_used=n_masks,
     )
 
+    # build the zip file
     buf = IO.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         if ss.get("cellpose_model_bytes"):
             z.writestr("cellpose_model.pt", ss["cellpose_model_bytes"])
+
+        # add table hyperparameter gridsearch results if performed
+        if ss.get("cp_do_gridsearch"):
+            z.writestr(
+                "hyperparameter_search.csv",
+                st.session_state["cp_grid_results_df"].to_csv(),
+            )
+
+        # add table of training parameters
         z.writestr(
             "params.csv",
             pd.Series(params)
@@ -445,16 +458,26 @@ def download_cellpose_training_record():
             .reset_index(name="value")
             .to_csv(index=False),
         )
+
+        # add training images and masks
         for k in ok:
-            r = ss["images"][k]
-            img = np.asarray(r["image"])
-            if img.dtype != np.uint8:
-                img = np.clip(img, 0, 255).astype(np.uint8)
+            rec = ss["images"][k]
+
+            # save images
             b = IO.BytesIO()
+            img = np.asarray(rec["image"])
             Image.fromarray(img).save(b, "TIFF")
-            name = r.get("name", f"{k}.tif")
-            name = name if name.lower().endswith(".tif") else f"{name}.tif"
-            z.writestr(f"images/{name}", b.getvalue())
+            img_name = Path(rec.get("name")).stem
+            z.writestr(f"images/{img_name}.tif", b.getvalue())
+
+            # save masks
+            c = IO.BytesIO()
+            mask = np.asarray(rec["masks"])
+            Image.fromarray(mask).save(c, "TIFF")
+            mask_name = Path(rec.get("name")).stem + "_masks.tif"
+            z.writestr(f"masks/{mask_name}", c.getvalue())
+
+        # add training summary plots
         for k, p in [
             ("cp_losses_png", "plots/cp_losses.png"),
             ("cp_compare_iou_png", "plots/cp_compare_iou.png"),

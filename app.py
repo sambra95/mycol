@@ -1,8 +1,14 @@
 # app.py
 import streamlit as st
-from boot import common_boot
+import os
+from boot import common_boot, configure_tf_cpu_only
+from helpers.state_ops import ensure_global_state
 
 st.set_page_config(page_title="Mycoscope", page_icon="🧬", layout="wide")
+
+ensure_global_state()
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+configure_tf_cpu_only()
 
 common_boot()
 

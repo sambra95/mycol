@@ -22,12 +22,19 @@ def ensure_global_state() -> None:
     ss.setdefault("side_interaction_mode", "Draw box")
 
     # cellpose model training defaults
-    ss.setdefault("cyto_to_train", "Cyto1")
+    ss.setdefault("cyto_to_train", "Cyto3")
     ss.setdefault("train_losses", [])
     ss.setdefault("test_losses", [])
+
+    # cellpose
     ss.setdefault("cellpose_channels", [0, 0])
     ss.setdefault("cp_ch1", 0)
     ss.setdefault("cp_ch2", 0)
+    ss.setdefault("cp_min_size", 0)
+    ss.setdefault("cp_niter", 0)
+    ss.setdefault("cp_flow_threshold", 0.4)
+    ss.setdefault("cp_cellprob_threshold", 0.2)
+    ss.setdefault("cp_diameter", 0.0)
 
     ss.setdefault("densenet_ckpt_bytes", None)
     ss.setdefault("dn_input_size", 64)

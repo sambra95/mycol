@@ -186,9 +186,24 @@ def segment_rec_with_cellpose(
 
 
 def _save_fig_to_session(fig, key_prefix: str, dpi: int = 200):
-    buf = IO.BytesIO()
-    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
-    st.session_state[f"{key_prefix}_png"] = buf.getvalue()
+    import io
+    import streamlit as st
+
+    buf = io.BytesIO()
+    if hasattr(fig, "savefig"):  # Matplotlib
+        fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+        data = buf.getvalue()
+    else:  # Plotly
+        import plotly.io as pio
+
+        # Use figure's layout size if set; otherwise fall back
+        width = int(getattr(fig.layout, "width", 900) or 900)
+        height = int(getattr(fig.layout, "height", 400) or 400)
+        # Approximate DPI via Plotly's scale (Plotly assumes ~96 DPI)
+        scale = max(dpi / 96.0, 1.0)
+        data = pio.to_image(fig, format="png", width=width, height=height, scale=scale)
+
+    st.session_state[f"{key_prefix}_png"] = data
 
 
 def _plot_losses(train_losses, test_losses):

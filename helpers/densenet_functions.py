@@ -11,6 +11,7 @@ import io
 from zipfile import ZipFile, ZIP_DEFLATED
 import os
 import tempfile
+import plotly.io as pio
 
 from tensorflow.keras.utils import Sequence
 from tensorflow.keras import layers, models
@@ -492,106 +493,133 @@ def evaluate_fine_tuned_densenet(history, val_gen, classes):
 # -------------------------------
 
 
-def _plot_confusion_matrix(
-    cm: np.ndarray, class_names: list[str], *, normalize: bool = True
-):
-    """Nice confusion matrix:
+def _plot_confusion_matrix(cm, class_names, *, normalize=True):
+    """
+    Interactive confusion matrix using Plotly.
     - optional row-normalization to percentages
     - count + % annotated in each cell
     - readable axes & colors
     """
+    import numpy as np
+    import plotly.graph_objects as go
+
     if normalize:
         with np.errstate(invalid="ignore", divide="ignore"):
-            cmn = cm.astype(np.float64) / cm.sum(axis=1, keepdims=True)
+            cmn = cm.astype(float) / cm.sum(axis=1, keepdims=True)
             cmn = np.nan_to_num(cmn)
     else:
         cmn = cm
 
-    fig, ax = plt.subplots(
-        figsize=(max(5, 0.8 * len(class_names)), max(4, 0.8 * len(class_names)))
+    n = len(class_names)
+    text = [
+        [
+            f"{cm[i,j]}<br>{cmn[i,j]*100:.1f}%" if normalize else str(cm[i, j])
+            for j in range(n)
+        ]
+        for i in range(n)
+    ]
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=cmn,
+            x=class_names,
+            y=class_names,
+            text=text,
+            textfont=dict(size=20),
+            texttemplate="%{text}",
+            colorscale="Blues",
+            hoverongaps=False,
+            showscale=False,
+        )
     )
-    ax.imshow(cmn, interpolation="nearest", cmap="Blues")
 
-    ax.set_xticks(np.arange(len(class_names)))
-    ax.set_yticks(np.arange(len(class_names)))
-    ax.set_xticklabels(class_names, rotation=45, ha="right")
-    ax.set_yticklabels(class_names)
-    ax.set_xlabel("Predicted Class")
-    ax.set_ylabel("True Class")
+    fig.update_layout(
+        xaxis=dict(title="Predicted Class", tickangle=45),
+        yaxis=dict(title="True Class", autorange="reversed"),
+        width=max(500, 80 * n),
+        height=max(400, 80 * n),
+        plot_bgcolor="white",  # ← inside plot area
+        paper_bgcolor="white",  # ← outside plot area
+        margin=dict(l=80, r=80, t=40, b=80),
+    )
 
-    # annotate cells with count (+ percent if normalized)
-    thresh = cmn.max() * 0.5
-    for i in range(cm.shape[0]):
-        for j in range(cm.shape[1]):
-            count = cm[i, j]
-            if normalize:
-                txt = f"{count}\n{cmn[i,j]*100:.1f}%"
-            else:
-                txt = f"{count}"
-            ax.text(
-                j,
-                i,
-                txt,
-                ha="center",
-                va="center",
-                color="white" if cmn[i, j] > thresh else "black",
-                fontsize=9,
-            )
-
-    ax.grid(False)
-    fig.tight_layout()
-
-    _save_fig_to_session(fig, key_prefix=f"densenet_plot_confusion", dpi=300)
-
+    st.session_state["densenet_confusion_matrix"] = fig
+    # _save_fig_to_session(fig, key_prefix="densenet_plot_confusion", dpi=300)
     return fig
 
 
 def _plot_densenet_losses(train_losses, test_losses, metrics=None):
     """
-    Plot training/validation loss curves and, if provided,
-    a bar chart of evaluation metrics.
-    metrics should be a dict like {"accuracy": 0.625, "precision": 0.828, "F1": 0.702}.
+    Plot training/validation loss curves and, if provided, a bar chart of evaluation metrics.
+    metrics: dict like {"accuracy": 0.625, "precision": 0.828, "F1": 0.702}.
     """
-    import matplotlib.pyplot as plt
+    from plotly.subplots import make_subplots
+    import plotly.graph_objects as go
 
-    epochs = range(1, len(train_losses) + 1)
+    epochs = list(range(1, len(train_losses) + 1))
+    fig = make_subplots(
+        rows=1,
+        cols=2,
+        subplot_titles=("DenseNet training/validation loss", "Validation metrics"),
+        horizontal_spacing=0.1,
+    )
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+    # Loss curves
+    fig.add_scatter(
+        x=epochs,
+        y=train_losses,
+        mode="lines+markers",
+        name="train",
+        row=1,
+        col=1,
+        line=dict(color="#DC050C", width=2),
+        marker=dict(color="#DC050C", size=6),
+    )
+    te = [(e, v) for e, v in zip(epochs, test_losses) if v != 0]
+    e, v = zip(*te)
+    fig.add_scatter(
+        x=e,
+        y=v,
+        mode="lines+markers",
+        name="val",
+        row=1,
+        col=1,
+        line=dict(color="#4EB265", width=2),
+        marker=dict(color="#4EB265", size=6),
+    )
 
-    # --- left subplot: loss curves ---
-    ax1.plot(epochs, train_losses, label="train")
-    if test_losses is not None and len(test_losses) == len(train_losses):
-        test_epochs = [e for e, v in zip(epochs, test_losses) if v != 0]
-        test_vals = [v for v in test_losses if v != 0]
-        ax1.plot(test_epochs, test_vals, label="val")
+    fig.update_xaxes(title_text="Epoch", showgrid=True, row=1, col=1)
+    fig.update_yaxes(title_text="Loss", showgrid=True, row=1, col=1)
 
-    ax1.set_xlabel("Epoch")
-    ax1.set_ylabel("Loss")
-    ax1.set_title("DenseNet training/validation loss")
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
+    # Metrics bar chart
+    labels, values = list(metrics.keys()), list(metrics.values())
+    fig.add_bar(
+        x=labels,
+        y=values,
+        text=[f"{v:.3f}" for v in values],
+        textposition="outside",
+        marker=dict(
+            color=["#5289C7", "#55A868", "#E8601C"],
+            line=dict(color="rgba(0,0,0,0.5)", width=2),
+        ),
+        opacity=0.8,
+        name="metrics",
+        row=1,
+        col=2,
+    )
+    fig.update_yaxes(range=[0, 1.0], row=1, col=2)
 
-    # --- right subplot: metrics bar chart ---
-    if metrics is not None:
-        labels = list(metrics.keys())
-        values = list(metrics.values())
-        ax2.bar(
-            labels,
-            values,
-            color=["tab:blue", "tab:orange", "tab:green"],
-            alpha=0.8,
-            edgecolor="black",
-        )
-        ax2.set_ylim(0, 1.0)
-        ax2.set_title("Validation metrics")
-        for i, v in enumerate(values):
-            ax2.text(i, v + 0.02, f"{v:.3f}", ha="center", fontsize=9)
-    else:
-        ax2.axis("off")
+    fig.update_layout(
+        showlegend=True,
+        height=400,
+        width=900,
+        plot_bgcolor="white",  # ← inside plot area
+        paper_bgcolor="white",  # ← outside plot area
+    )
 
-    # 🔸 Save PNG to session_state
-    _save_fig_to_session(fig, key_prefix=f"densenet_plot_losses", dpi=300)
+    st.session_state["densenet_plot_losses"] = fig
 
+    # _save_fig_to_session(fig, key_prefix="densenet_plot_losses", dpi=300)
     return fig
 
 
@@ -691,20 +719,30 @@ def download_densenet_training_record():
                 .to_csv(index=False),
             )
 
-            # add the cell patch training set to the zip file
             for n in zin.namelist():
                 zout.writestr(n, zin.read(n))
 
-            # add the training summary plots to the zip file
-            for k, p in [
-                ("densenet_plot_losses_png", "plots/densenet_losses.png"),
-                ("densenet_plot_confusion_png", "plots/densenet_confusion.png"),
-            ]:
-                if k in ss:
-                    zout.writestr(p, ss[k])
+            fig = ss["densenet_plot_losses"]
+            png = pio.to_image(
+                ss["densenet_plot_losses"],
+                format="png",
+                scale=3,
+                width=int(getattr(fig.layout, "width", 900) or 900),
+                height=int(getattr(fig.layout, "height", 400) or 400),
+            )
+            zout.writestr("plots/densenet_losses.png", png)
+
+            png = pio.to_image(
+                ss["densenet_confusion_matrix"],
+                format="png",
+                scale=3,
+                width=int(getattr(fig.layout, "width", 800) or 800),
+                height=int(getattr(fig.layout, "height", 600) or 600),
+            )
+            zout.writestr("plots/densenet_confusion.png", png)
 
     st.download_button(
-        "Download DenseNet model, dataset and training metrics (ZIP)",
+        "Download fine-tuned DenseNet model, dataset and training metrics",
         data=buf.getvalue(),
         file_name=f"densenet_training_{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip",
         mime="application/zip",

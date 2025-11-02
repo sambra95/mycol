@@ -121,10 +121,10 @@ def render_densenet_train_panel(key_ns: str = "train_densenet"):
     densenet_train_fragment()
 
 
-def show_densenet_training_plots(height: int = 600):
+def show_densenet_training_plots():
     """Render saved DenseNet training plots from session state (if available)."""
     k1, k2 = "densenet_plot_losses_png", "densenet_plot_confusion_png"
-    with st.container(border=True, height=height):
+    with st.container(border=True):
         if (k1 not in st.session_state) and (k2 not in st.session_state):
             st.info("No fine-tuning data available. Tune a model first.")
             st.empty()
@@ -137,14 +137,14 @@ def show_densenet_training_plots(height: int = 600):
             # button to download fine-tuned model, training data and training stats
             download_densenet_training_record()
             st.subheader("Training losses and validation metrics")
-            st.image(
-                st.session_state[k1],
+            st.plotly_chart(
+                st.session_state["densenet_plot_losses"],
                 use_container_width=True,
             )
 
             st.subheader("Class confusion matrix")
-            st.image(
-                st.session_state[k2],
+            st.plotly_chart(
+                st.session_state["densenet_confusion_matrix"],
                 use_container_width=True,
             )
 
@@ -424,10 +424,10 @@ def cellpose_train_fragment():
     )
 
 
-def show_cellpose_training_plots(height: int = 600):
+def show_cellpose_training_plots():
     """Render saved Cellpose plots from session state (if available)."""
     k1, k2 = "cp_losses_png", "cp_compare_iou_png"
-    with st.container(border=True, height=height):
+    with st.container(border=True):
         if (k1 not in st.session_state) or (k2 not in st.session_state):
             st.header("Cellpose Training Summary")
             st.info("No fine-tuning data to show.")

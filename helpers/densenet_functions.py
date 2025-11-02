@@ -30,7 +30,7 @@ from sklearn.metrics import (
 
 # ---- bring in existing app helpers ----
 from helpers.state_ops import ordered_keys
-from helpers.cellpose_functions import _save_fig_to_session, normalize_image
+from helpers.cellpose_functions import normalize_image
 
 ss = st.session_state
 

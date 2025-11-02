@@ -16,12 +16,15 @@ from helpers.densenet_functions import (
     fine_tune_densenet,
     evaluate_fine_tuned_densenet,
     download_densenet_training_record,
+    _plot_densenet_loss_curve,
 )
 from helpers.cellpose_functions import (
     finetune_cellpose_from_records,
-    _plot_losses,
-    compare_models_mean_iou_plot,
     download_cellpose_training_record,
+    compute_model_ious,
+    plot_iou_comparison,
+    plot_pred_vs_true_counts,
+    _get_cellpose_model_cached,
 )
 
 
@@ -286,12 +289,12 @@ def cellpose_train_fragment():
         channels=channels,
     )
 
-    st.success(f"Fine-tuning complete ✅ (model: {model_name})")
-
     st.session_state["train_losses"] = train_losses
     st.session_state["test_losses"] = test_losses
 
-    _plot_losses(train_losses, test_losses)
+    st.session_state["cellpose_training_losses"] = _plot_densenet_loss_curve(
+        train_losses, test_losses
+    )
 
     # ----- Prepare a (possibly subsampled) evaluation set -----
     masks = [rec["masks"] for rec in recs.values()]
@@ -344,7 +347,7 @@ def cellpose_train_fragment():
         if total == 0:
             st.warning("No valid grid combinations. Skipping tuning.")
         else:
-            # Get channels from session (fallback 0,0)
+            # Get channels from session
             ch1 = int(st.session_state.get("cp_ch1"))
             ch2 = int(st.session_state.get("cp_ch2"))
             channels = [ch1, ch2]
@@ -369,8 +372,8 @@ def cellpose_train_fragment():
                     text=f"Evaluating {i}/{total} (cp={cellprob}, flow={flowthresh}, niter={niter}, min={min_size})",
                 )
                 masks_pred, flows, styles = eval_model.eval(
-                    list(images),
-                    channels=list(channels),
+                    images,
+                    channels=channels,
                     diameter=None,
                     cellprob_threshold=cellprob,
                     flow_threshold=flowthresh,
@@ -400,34 +403,58 @@ def cellpose_train_fragment():
             )
             st.session_state["cp_grid_results_df"] = df
 
+            st.success(f"Fine-tuning complete ✅ (model: {model_name})")
+
             # Pick best and push into session state used by the mask editing panel
             if not df.empty and np.isfinite(df["ap_iou_0.5"].iloc[0]):
                 best = df.iloc[0]
                 ss["cp_cellprob_threshold"] = float(best["cellprob"])
                 ss["cp_flow_threshold"] = float(best["flow_threshold"])
                 ss["cp_min_size"] = int(best["min_size"])
-                ss["cp_niter"] = int(
-                    best["niter"]
-                )  # not used in segment_rec_with_cellpose, but we keep it
+                ss["cp_niter"] = int(best["niter"])
                 st.success(
                     f"Best hyperparameters set: cellprob={best['cellprob']}, "
                     f"flow={best['flow_threshold']}, min_size={int(best['min_size'])}, niter={int(best['niter'])}"
                 )
+
             else:
                 st.info("No valid result to set best hyperparameters.")
 
-    # ----- Plot model comparison afterwards (unchanged) -----
-    compare_models_mean_iou_plot(
-        images,
-        masks,
-        base_model_name=base_model if base_model != "scratch" else "cyto2",
+    # ----- Plot model comparison afterwards -----
+    use_gpu = core.use_gpu()
+    base_model = models.CellposeModel(gpu=use_gpu, model_type=ss["cp_base_model"])
+    base_preds, _, _ = base_model.eval(images, channels=channels)
+
+    # Fine-tuned model from session BYTES
+    tuned_model = _get_cellpose_model_cached()
+    tuned_preds, _, _ = tuned_model.eval(images, channels=channels)
+
+    # compare and plot ious pre and post training
+    base_ious = compute_model_ious(
+        images=images, masks=masks, model=base_model, channels=channels
+    )
+    tuned_ious = compute_model_ious(
+        images=images, masks=masks, model=tuned_model, channels=channels
+    )
+    ss["cellpose_iou_comparison"] = plot_iou_comparison(base_ious, tuned_ious)
+
+    # compare and plot true vs predicted counts pre and post training
+    gt_counts = [int(np.count_nonzero(np.unique(mask))) for mask in masks]
+    base_counts = [int(np.count_nonzero(np.unique(pred))) for pred in base_preds]
+    tuned_counts = [int(np.count_nonzero(np.unique(pred))) for pred in tuned_preds]
+
+    ss["cellpose_original_counts_comparison"] = plot_pred_vs_true_counts(
+        gt_counts, base_counts, title="Base Model Predictions"
+    )
+    ss["cellpose_tuned_counts_comparison"] = plot_pred_vs_true_counts(
+        gt_counts, tuned_counts, title="Tuned Model Predictions"
     )
 
 
 def show_cellpose_training_plots():
     """Render saved Cellpose plots from session state (if available)."""
     k1, k2 = "cp_losses_png", "cp_compare_iou_png"
-    if (k1 not in st.session_state) or (k2 not in st.session_state):
+    if "cellpose_training_losses" not in st.session_state:
         st.header("Cellpose Training Summary")
         st.info("No fine-tuning data to show.")
         return
@@ -437,17 +464,30 @@ def show_cellpose_training_plots():
         st.header("Cellpose Training Summary")
 
         # button for downloading fine-tuned model, training data and training stats in a zip file
-        download_cellpose_training_record()
+        # download_cellpose_training_record()
 
-        st.image(
-            st.session_state[k1],
-            use_container_width=True,
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            st.plotly_chart(
+                st.session_state["cellpose_training_losses"],
+                use_container_width=True,
+            )
 
-        st.image(
-            st.session_state[k2],
-            use_container_width=True,
-        )
+            st.plotly_chart(
+                st.session_state["cellpose_original_counts_comparison"],
+                use_container_width=True,
+            )
+
+        with col2:
+            st.plotly_chart(
+                st.session_state["cellpose_iou_comparison"],
+                use_container_width=True,
+            )
+
+            st.plotly_chart(
+                st.session_state["cellpose_tuned_counts_comparison"],
+                use_container_width=True,
+            )
 
         if ss.get("cp_do_gridsearch"):
             st.dataframe(
@@ -457,9 +497,3 @@ def show_cellpose_training_plots():
             )
         else:
             st.info("No hyperparameter tuning performed.")
-
-
-def render_cellpose_train_panel(key_ns="train_cellpose"):
-    if not _cellpose_options(key_ns):
-        return
-    cellpose_train_fragment()  # heavy; runs only on button click

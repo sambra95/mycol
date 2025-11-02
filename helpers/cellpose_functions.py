@@ -185,182 +185,135 @@ def segment_rec_with_cellpose(
 # -----------------------------------------------------#
 
 
-def _save_fig_to_session(fig, key_prefix: str, dpi: int = 200):
-    import io
-    import streamlit as st
+import plotly.graph_objects as go
+import numpy as np
+from sklearn.metrics import r2_score, mean_absolute_error
 
-    buf = io.BytesIO()
-    if hasattr(fig, "savefig"):  # Matplotlib
-        fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
-        data = buf.getvalue()
-    else:  # Plotly
-        import plotly.io as pio
-
-        # Use figure's layout size if set; otherwise fall back
-        width = int(getattr(fig.layout, "width", 900) or 900)
-        height = int(getattr(fig.layout, "height", 400) or 400)
-        # Approximate DPI via Plotly's scale (Plotly assumes ~96 DPI)
-        scale = max(dpi / 96.0, 1.0)
-        data = pio.to_image(fig, format="png", width=width, height=height, scale=scale)
-
-    st.session_state[f"{key_prefix}_png"] = data
+import numpy as np
+from cellpose import models, metrics
 
 
-def _plot_losses(train_losses, test_losses):
-    fig = plt.figure(figsize=(6, 3))
-    epochs = range(1, len(train_losses) + 1)
-    plt.plot(epochs, train_losses, label="train")
+def compute_model_ious(images, masks, model, channels):
+    """
+    Evaluate a Cellpose model on a list of images/masks and return the IoU values per image.
 
-    if test_losses is not None and len(test_losses) == len(train_losses):
-        # keep only nonzero test losses (ignore exact zeros, keep negatives)
-        test_epochs = [e for e, v in zip(epochs, test_losses) if v != 0]
-        test_vals = [v for v in test_losses if v != 0]
-        plt.plot(test_epochs, test_vals, label="test")
+    Parameters
+    ----------
+    images : list of np.ndarray
+        Input images to evaluate.
+    masks : list of np.ndarray
+        Corresponding ground-truth segmentation masks.
+    model : cellpose.models.CellposeModel
+        A loaded Cellpose model (base or fine-tuned).
 
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Cellpose training and test losses during fine-tuning")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-
-    # 🔸 Save to session state for later download/use
-    _save_fig_to_session(fig, key_prefix="cp_losses", dpi=300)
-
-
-def _count_instances(lbl):
-    return int(np.count_nonzero(np.unique(lbl)))  # #unique nonzero ids
-
-
-def compare_models_mean_iou_plot(
-    images, masks, base_model_name="cyto2", channels=(0, 0)
-):
-    use_gpu = core.use_gpu()
-
-    # Base/original model
-    base = models.CellposeModel(gpu=use_gpu, model_type=base_model_name)
-    base_preds, _, _ = base.eval(list(images), channels=list(channels))
-
-    # Fine-tuned model from session BYTES
-    tuned = models.CellposeModel(gpu=use_gpu, model_type=base_model_name)
-    ft_bytes = st.session_state.get("cellpose_model_bytes")
-    if ft_bytes:
-        sd = torch.load(IO.BytesIO(ft_bytes), map_location="cpu")
-        tuned.net.load_state_dict(sd)
-    tuned_preds, _, _ = tuned.eval(list(images), channels=list(channels))
-
-    # IoU per image
-    base_ious = [
+    Returns
+    -------
+    list of float
+        IoU value for each image.
+    """
+    preds, _, _ = model.eval(images, channels=channels)
+    ious = [
         metrics.average_precision([gt], [pr])[0][:, 0].mean()
-        for gt, pr in zip(masks, base_preds)
+        for gt, pr in zip(masks, preds)
     ]
-    tuned_ious = [
-        metrics.average_precision([gt], [pr])[0][:, 0].mean()
-        for gt, pr in zip(masks, tuned_preds)
-    ]
+    return ious
 
-    # --- IoU data ---
-    labels = ["Original", "Fine-tuned"]
+
+def plot_iou_comparison(base_ious, tuned_ious):
+    labels = ["Base Model", "Fine-tuned"]
+    x = [0, 1]
     means = [np.mean(base_ious), np.mean(tuned_ious)]
     sds = [
         np.std(base_ious, ddof=1) if len(base_ious) > 1 else 0.0,
         np.std(tuned_ious, ddof=1) if len(tuned_ious) > 1 else 0.0,
     ]
 
-    # --- Count instances ---
-    gt_counts = [_count_instances(m) for m in masks]
-    base_counts = [_count_instances(pr) for pr in base_preds]
-    tuned_counts = [_count_instances(pr) for pr in tuned_preds]
-
-    lim = max(1, max(gt_counts + base_counts + tuned_counts)) if gt_counts else 1
-
-    # --- Plots ---
-    fig, (ax0, ax1, ax2) = plt.subplots(1, 3, figsize=(12, 4))
-
-    # Panel 1: Mean IoU
-    ax0.bar(np.arange(2), means, yerr=sds, capsize=5, alpha=0.8, edgecolor="black")
-    jitter = 0.12
-    ax0.scatter(
-        np.zeros(len(base_ious)) + (np.random.rand(len(base_ious)) - 0.5) * jitter,
-        base_ious,
-        s=18,
-        color="k",
-        zorder=10,
+    fig = go.Figure()
+    fig.add_bar(
+        x=x,
+        y=means,
+        width=0.6,
+        error_y=dict(type="data", array=sds, visible=True),
+        marker=dict(
+            color=[
+                "#EBF1F8",
+                "#EBF1F8",
+            ],
+            line=dict(color="#004280", width=2),
+        ),
     )
-    ax0.scatter(
-        np.ones(len(tuned_ious)) + (np.random.rand(len(tuned_ious)) - 0.5) * jitter,
-        tuned_ious,
-        s=18,
-        color="k",
-        zorder=10,
+
+    j = 0.12
+    fig.add_scatter(
+        x=(np.full(len(base_ious), x[0]) + (np.random.rand(len(base_ious)) - 0.5) * j),
+        y=base_ious,
+        mode="markers",
+        marker=dict(color="#004280", size=6),
     )
-    ax0.set_xticks([0, 1])
-    ax0.set_xticklabels(labels)
-    ax0.set_ylim(0, 1.05)
-    ax0.set_ylabel("Mean IoU")
-    ax0.set_title("IoU Comparison")
-    ax0.grid(alpha=0.3)
+    fig.add_scatter(
+        x=(
+            np.full(len(tuned_ious), x[1]) + (np.random.rand(len(tuned_ious)) - 0.5) * j
+        ),
+        y=tuned_ious,
+        mode="markers",
+        marker=dict(color="#004280", size=6),
+    )
 
-    # Panel 2: Original counts vs GT
-    ax1.scatter(gt_counts, base_counts, s=28, alpha=0.85, label="Original")
-    ax1.plot([0, lim], [0, lim], ls="--", lw=1, color="gray")
-    ax1.set_title("Original vs GT counts")
-    ax1.set_xlabel("Ground-truth #instances")
-    ax1.set_ylabel("Predicted #instances")
-    ax1.set_xlim(-0.5, lim + 0.5)
-    ax1.set_ylim(-0.5, lim + 0.5)
-    ax1.grid(alpha=0.3)
+    fig.update_layout(
+        title="IoU Comparison",
+        xaxis=dict(tickmode="array", tickvals=x, ticktext=labels, range=[-0.6, 1.6]),
+        yaxis=dict(title="Mean IoU", range=[0, 1.05]),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        showlegend=False,
+    )
+    fig.update_xaxes(showgrid=True)
+    fig.update_yaxes(showgrid=True, gridcolor="rgba(0,0,0,0.1)")
+    return fig
 
-    # R² & MAE (base)
+
+def plot_pred_vs_true_counts(gt_counts, base_counts, title):
+    lim = max(1, max(gt_counts + base_counts))
+    fig = go.Figure()
+    fig.add_scatter(
+        x=gt_counts,
+        y=base_counts,
+        mode="markers",
+        marker=dict(size=8, opacity=0.85, color="#004280"),
+        name="Original",
+    )
+    fig.add_scatter(
+        x=[0, lim],
+        y=[0, lim],
+        mode="lines",
+        line=dict(dash="dash", width=1, color="gray"),
+        showlegend=False,
+    )
     if len(gt_counts) > 1:
-        r2_base = r2_score(gt_counts, base_counts)
-        mae_base = mean_absolute_error(gt_counts, base_counts)
-        ax1.text(
-            0.05,
-            0.95,
-            f"R² = {r2_base:.3f}\nMAE = {mae_base:.3f}",
-            transform=ax1.transAxes,
-            va="top",
-            ha="left",
-            fontsize=9,
-            bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.7),
+        fig.add_annotation(
+            xref="paper",
+            yref="paper",
+            x=0.05,
+            y=0.95,
+            showarrow=False,
+            text=f"R² = {r2_score(gt_counts, base_counts):.3f}<br>MAE = {mean_absolute_error(gt_counts, base_counts):.3f}",
+            bgcolor="white",
+            opacity=0.7,
+            align="left",
         )
-
-    # Panel 3: Fine-tuned counts vs GT
-    ax2.scatter(
-        gt_counts,
-        tuned_counts,
-        s=28,
-        alpha=0.85,
-        color="tab:orange",
-        label="Fine-tuned",
+    fig.update_layout(
+        title=title,
+        xaxis_title="True number of masks",
+        yaxis_title="Predicted number of masks",
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        showlegend=False,
     )
-    ax2.plot([0, lim], [0, lim], ls="--", lw=1, color="gray")
-    ax2.set_title("Fine-tuned vs GT counts")
-    ax2.set_xlabel("Ground-truth #instances")
-    ax2.set_xlim(-0.5, lim + 0.5)
-    ax2.set_ylim(-0.5, lim + 0.5)
-    ax2.grid(alpha=0.3)
-
-    # R² & MAE (tuned)
-    if len(gt_counts) > 1:
-        r2_tuned = r2_score(gt_counts, tuned_counts)
-        mae_tuned = mean_absolute_error(gt_counts, tuned_counts)
-        ax2.text(
-            0.05,
-            0.95,
-            f"R² = {r2_tuned:.3f}\nMAE = {mae_tuned:.3f}",
-            transform=ax2.transAxes,
-            va="top",
-            ha="left",
-            fontsize=9,
-            bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.7),
-        )
-
-    fig.suptitle("Original vs Fine-tuned Model Comparison", fontsize=13)
-    plt.tight_layout()
-
-    # 🔸 Save to session state for later download/use
-    _save_fig_to_session(fig, key_prefix="cp_compare_iou", dpi=300)
+    fig.update_xaxes(range=[-0.5, lim + 0.5], showgrid=True)
+    fig.update_yaxes(
+        range=[-0.5, lim + 0.5], showgrid=True, gridcolor="rgba(0,0,0,0.1)"
+    )
+    return fig
 
 
 # -----------------------------------------------------#

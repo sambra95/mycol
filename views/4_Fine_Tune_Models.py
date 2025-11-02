@@ -15,8 +15,10 @@ cellpose_tab, densenet_tab = st.tabs(
 
 with cellpose_tab:
     with st.container(border=True):
-        fine_tune_panel.render_cellpose_train_panel()
+        fine_tune_panel._cellpose_options()
+        fine_tune_panel.cellpose_train_fragment()
     fine_tune_panel.show_cellpose_training_plots()
+
 with densenet_tab:
     with st.container(border=True):
         fine_tune_panel._densenet_options()

@@ -26,7 +26,7 @@ def ensure_global_state() -> None:
     ss.setdefault("train_losses", [])
     ss.setdefault("test_losses", [])
 
-    # cellpose
+    # cellpose inference
     ss.setdefault("cellpose_channels", [0, 0])
     ss.setdefault("cp_ch1", 0)
     ss.setdefault("cp_ch2", 0)
@@ -36,12 +36,16 @@ def ensure_global_state() -> None:
     ss.setdefault("cp_cellprob_threshold", 0.2)
     ss.setdefault("cp_diameter", 0.0)
 
+    # cellpose training
     ss.setdefault("densenet_ckpt_bytes", None)
     ss.setdefault("dn_input_size", 64)
     ss.setdefault("dn_batch_size", 32)
     ss.setdefault("dn_max_epoch", 100)
     ss.setdefault("dn_val_split", 0.2)
     ss.setdefault("cp_compare_iou_png")
+
+    # image dataset download options
+    ss.setdefault("dl_normalize_download", False)
 
     # UI defaults / nonces
     ss.setdefault("pred_canvas_nonce", 0)

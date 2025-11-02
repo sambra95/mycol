@@ -116,6 +116,10 @@ def render_download_button():
                 "Overlay per-image class counts", False, key="dl_include_counts"
             )
 
+            normalize_for_download = c1.checkbox(
+                "Normalize downloaded images", False, key="dl_normalize_download"
+            )
+
         mz = masks_images_zip(images, ok, overlay, counts) if ok else b""
         st.download_button(
             "Download dataset (zip)",

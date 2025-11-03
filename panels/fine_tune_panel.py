@@ -20,11 +20,11 @@ from helpers.densenet_functions import (
 )
 from helpers.cellpose_functions import (
     finetune_cellpose_from_records,
-    download_cellpose_training_record,
     compute_model_ious,
     plot_iou_comparison,
     plot_pred_vs_true_counts,
     _get_cellpose_model_cached,
+    _build_cellpose_zip_bytes,
 )
 
 
@@ -279,22 +279,23 @@ def cellpose_train_fragment():
     nimg = int(ss.get("cp_batch_size"))
     channels = ss.get("cellpose_channels")
 
-    train_losses, test_losses, model_name = finetune_cellpose_from_records(
-        recs,
-        base_model=base_model,
-        epochs=epochs,
-        learning_rate=lr,
-        weight_decay=wd,
-        nimg_per_epoch=nimg,
-        channels=channels,
-    )
+    with st.spinner("Fine-tuning Cellpose…"):
+        train_losses, test_losses, model_name = finetune_cellpose_from_records(
+            recs,
+            base_model=base_model,
+            epochs=epochs,
+            learning_rate=lr,
+            weight_decay=wd,
+            nimg_per_epoch=nimg,
+            channels=channels,
+        )
 
-    st.session_state["train_losses"] = train_losses
-    st.session_state["test_losses"] = test_losses
+        st.session_state["train_losses"] = train_losses
+        st.session_state["test_losses"] = test_losses
 
-    st.session_state["cellpose_training_losses"] = _plot_densenet_loss_curve(
-        train_losses, test_losses
-    )
+        st.session_state["cellpose_training_losses"] = _plot_densenet_loss_curve(
+            train_losses, test_losses
+        )
 
     # ----- Prepare a (possibly subsampled) evaluation set -----
     masks = [rec["masks"] for rec in recs.values()]
@@ -421,34 +422,37 @@ def cellpose_train_fragment():
                 st.info("No valid result to set best hyperparameters.")
 
     # ----- Plot model comparison afterwards -----
-    use_gpu = core.use_gpu()
-    base_model = models.CellposeModel(gpu=use_gpu, model_type=ss["cp_base_model"])
-    base_preds, _, _ = base_model.eval(images, channels=channels)
+    with st.spinner("Validating model…"):
+        use_gpu = core.use_gpu()
+        base_model = models.CellposeModel(gpu=use_gpu, model_type=ss["cp_base_model"])
+        base_preds, _, _ = base_model.eval(images, channels=channels)
 
-    # Fine-tuned model from session BYTES
-    tuned_model = _get_cellpose_model_cached()
-    tuned_preds, _, _ = tuned_model.eval(images, channels=channels)
+        # Fine-tuned model from session BYTES
+        tuned_model = _get_cellpose_model_cached()
+        tuned_preds, _, _ = tuned_model.eval(images, channels=channels)
 
-    # compare and plot ious pre and post training
-    base_ious = compute_model_ious(
-        images=images, masks=masks, model=base_model, channels=channels
-    )
-    tuned_ious = compute_model_ious(
-        images=images, masks=masks, model=tuned_model, channels=channels
-    )
-    ss["cellpose_iou_comparison"] = plot_iou_comparison(base_ious, tuned_ious)
+        # compare and plot ious pre and post training
+        base_ious = compute_model_ious(
+            images=images, masks=masks, model=base_model, channels=channels
+        )
+        tuned_ious = compute_model_ious(
+            images=images, masks=masks, model=tuned_model, channels=channels
+        )
+        ss["cellpose_iou_comparison"] = plot_iou_comparison(base_ious, tuned_ious)
 
-    # compare and plot true vs predicted counts pre and post training
-    gt_counts = [int(np.count_nonzero(np.unique(mask))) for mask in masks]
-    base_counts = [int(np.count_nonzero(np.unique(pred))) for pred in base_preds]
-    tuned_counts = [int(np.count_nonzero(np.unique(pred))) for pred in tuned_preds]
+        # compare and plot true vs predicted counts pre and post training
+        gt_counts = [int(np.count_nonzero(np.unique(mask))) for mask in masks]
+        base_counts = [int(np.count_nonzero(np.unique(pred))) for pred in base_preds]
+        tuned_counts = [int(np.count_nonzero(np.unique(pred))) for pred in tuned_preds]
 
-    ss["cellpose_original_counts_comparison"] = plot_pred_vs_true_counts(
-        gt_counts, base_counts, title="Base Model Predictions"
-    )
-    ss["cellpose_tuned_counts_comparison"] = plot_pred_vs_true_counts(
-        gt_counts, tuned_counts, title="Tuned Model Predictions"
-    )
+        ss["cellpose_original_counts_comparison"] = plot_pred_vs_true_counts(
+            gt_counts, base_counts, title="Base Model Predictions"
+        )
+        ss["cellpose_tuned_counts_comparison"] = plot_pred_vs_true_counts(
+            gt_counts, tuned_counts, title="Tuned Model Predictions"
+        )
+
+        ss["cp_zip_bytes"] = _build_cellpose_zip_bytes()
 
 
 def show_cellpose_training_plots():
@@ -496,4 +500,11 @@ def show_cellpose_training_plots():
             st.info("No hyperparameter tuning performed.")
 
         # button for downloading fine-tuned model, training data and training stats in a zip file
-        download_cellpose_training_record()
+        st.download_button(
+            "Download Cellpose model, dataset and training metrics (ZIP)",
+            data=ss["cp_zip_bytes"],
+            file_name="cellpose_training.zip",
+            mime="application/zip",
+            use_container_width=True,
+            type="primary",
+        )

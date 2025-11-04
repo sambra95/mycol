@@ -28,18 +28,23 @@ st.write(
 
 
 # Page-specific sidebar
-with st.sidebar:
 
-    # common sidebar section for navigating between images
-    listTabs = ["Segment Cells", "Classify Cells"]
-    whitespace = 9
-    editing_tab, classifying_tab = st.tabs(["Segment Cells", "Classify Cells"])
-    with editing_tab:
-        mask_editing_panel.render_segment_sidebar(key_ns="edit_side")
-    with classifying_tab:
-        mask_editing_panel.render_classify_sidebar(key_ns="classify_side")
+col1, col2 = st.columns([2, 5])
+with col1:
+    st.markdown("<br><br><br><br><br><br>", unsafe_allow_html=True)
+    with st.container(border=True):
 
-    mask_editing_panel.render_download_button()
+        # common sidebar section for navigating between images
+        listTabs = ["Segment Cells", "Classify Cells"]
+        whitespace = 9
+        editing_tab, classifying_tab = st.tabs(["Segment Cells", "Classify Cells"])
+        with editing_tab:
+            mask_editing_panel.render_segment_sidebar(key_ns="edit_side")
+        with classifying_tab:
+            mask_editing_panel.render_classify_sidebar(key_ns="classify_side")
+
+        mask_editing_panel.render_download_button()
 
 # Page main content
-mask_editing_panel.render_main(key_ns="edit")
+with col2:
+    mask_editing_panel.render_main(key_ns="edit")

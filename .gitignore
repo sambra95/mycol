@@ -18,3 +18,5 @@ __pycache__/
 
 # Ignore environment files
 
+helpers/.DS_Store
+panels/.DS_Store

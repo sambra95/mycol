@@ -15,9 +15,9 @@ from helpers.state_ops import ensure_global_state
 ensure_global_state()
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 configure_tf_cpu_only()
-# common_boot()
+common_boot()
 
-# hide Streamlit's sidebar nav (since Hydralit provides top nav)
+# Optional: hide Streamlit's sidebar nav (since Hydralit provides top nav)
 st.markdown(
     """
     <style>
@@ -27,7 +27,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# remove white space above the navbar and around the page
+import streamlit as st
+
 st.markdown(
     """
 <style>
@@ -37,10 +38,17 @@ div.block-container {
     padding-bottom: 0rem;
     padding-left: 1rem;
     padding-right: 1rem;
-    margin-top: -40px !important;
-
 }
 
+/* Optional: also remove header spacing if using st.navigation() */
+section[data-testid="stHeader"] {
+    padding: 0;
+}
+
+/* Optional: make the main container full-width */
+main {
+    padding: 0;
+}
 </style>
 """,
     unsafe_allow_html=True,

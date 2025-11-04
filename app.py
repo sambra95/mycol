@@ -63,15 +63,20 @@ app = HydraApp(
 )
 
 
-# Your four functional pages, mapped 1:1 to the original files
+# Home page (default)
+@app.addapp(title="", icon="🏠")
+def page_home():
+    run_view("views/1_home_page.py")
+
+
 @app.addapp(title="Upload Models and Data", icon="📥")
 def page_upload():
-    run_view("views/1_Upload_data.py")
+    run_view("views/2_Upload_data.py")
 
 
 @app.addapp(title="Segment and Classify Cells", icon="🎭")
 def page_segment_classify():
-    run_view("views/2_Create_and_Edit_Masks.py")
+    run_view("views/3_Create_and_Edit_Masks.py")
 
 
 @app.addapp(title="Train Segmentation and Classification Models", icon="🧠")

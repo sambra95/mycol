@@ -1,4 +1,4 @@
-welcome_help = """### 🧫 Welcome to Mycoscope
+welcome_help = """### Welcome to Mycoscope
 
 **Mycoscope** is an interactive platform for exploring, segmenting, and classifying microscopy images — powered by AI and designed to streamline your analysis workflow.
 
@@ -14,7 +14,7 @@ With Mycoscope, you can:
 Whether you’re preparing data for quantitative cell analysis, building custom AI models, or exploring sample morphology, Mycoscope gives you a flexible, visual environment to make the process fast, transparent, and reproducible.
 """
 
-upload_help = """### 🧬 Upload Your Data
+upload_help = """### Upload Your Data
 
 Welcome to the **Upload page** — this is where your analysis begins.
 
@@ -33,7 +33,7 @@ Once your files are uploaded, you’ll see a **summary table** showing:
 Use this page to confirm that all your data and models are correctly loaded before moving on to image analysis.
 """
 
-segmentclassify_help = """### 🔬 Segmentation & Classification
+segmentclassify_help = """### Segmentation & Classification
 
 This page is where you can **explore, edit, and analyze your images** using Mycoscope’s AI and interactive tools.
 

@@ -5,7 +5,7 @@ from panels import cell_metrics_panel
 common_boot()
 
 with st.container(border=True):
-    cell_metrics_panel.render_sidebar()  # if you have one
+    cell_metrics_panel.render_sidebar()
 
 st.divider()
 

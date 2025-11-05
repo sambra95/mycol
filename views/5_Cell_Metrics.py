@@ -9,4 +9,5 @@ with st.container(border=True):
 
 st.divider()
 
-cell_metrics_panel.render_main()
+if st.button("Generate Plots"):
+    cell_metrics_panel.render_main()

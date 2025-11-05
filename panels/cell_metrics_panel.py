@@ -1,11 +1,12 @@
 # panels/cell_metrics_panel.py
 import streamlit as st
 
-from helpers.upload_download_functions import ordered_keys, _build_cell_metrics_zip
+from helpers.upload_download_functions import ordered_keys
 from helpers.cell_metrics_functions import (
     _build_analysis_df,
     _violin,
     _bar,
+    _build_cell_metrics_zip,
 )
 
 
@@ -14,11 +15,21 @@ def render_sidebar():
     if not ordered_keys():
         return False
 
-    st.select_slider(
-        "Plot type",
-        options=["Violin", "Bar"],
-        value=st.session_state.get("analysis_plot_type", "Violin"),
-        key="analysis_plot_type",
+    # toggle between violin and barplot types
+    current_plot_type = st.session_state.get("analysis_plot_type", "Violin")
+    # render a toggle that switches between the two modes
+    toggle_value = st.toggle(
+        f"Plot type: {current_plot_type}",
+        value=(current_plot_type == "Violin"),
+    )
+    # update session state to keep it consistent
+    st.session_state.analysis_plot_type = "Violin" if toggle_value else "Bar"
+
+    # toggle overlay of datapoints in the plots
+    overlay_points = st.toggle(
+        "Overlay individual datapoints",
+        value=st.session_state.get("overlay_datapoints", False),
+        key="overlay_datapoints",
     )
 
     df = _build_analysis_df()
@@ -35,7 +46,7 @@ def render_sidebar():
         label for label in default_labels if label in label_options
     ] or label_options
     st.multiselect(
-        "Include labels",
+        "Include these classes in the plots",
         options=label_options,
         default=default_labels,
         key="analysis_labels",
@@ -50,7 +61,7 @@ def render_sidebar():
         m for m in default_metrics if m in metric_options
     ] or metric_options
     st.multiselect(
-        "Include metrics",
+        "Plot these metrics",
         options=metric_options,
         default=default_metrics,
         key="analysis_metrics",
@@ -98,6 +109,7 @@ def render_main():
     ptype = st.session_state.get("analysis_plot_type", "Violin")
     plots = []
     for col in metrics:
-        fname, img = (_violin if ptype == "Violin" else _bar)(df_filt, col)
-        plots.append((fname, img))
-    st.session_state["analysis_plots"] = plots
+        fname, fig = (_violin if ptype == "Violin" else _bar)(df_filt, col)
+        st.header(fname)
+        st.plotly_chart(fig, use_container_width=True)
+        st.session_state[fname] = fig

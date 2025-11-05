@@ -173,10 +173,6 @@ import pandas as pd
 
 from helpers.classifying_functions import classes_map_from_labels, palette_from_emojis
 from helpers.mask_editing_functions import composite_over_by_class
-from helpers.cell_metrics_functions import (
-    _build_analysis_df,
-    build_image_summary_df,
-)
 
 # --- FUNCTIONS FOR DOWNLOADING ANNOTATED IMAGE DATASETS
 
@@ -274,43 +270,4 @@ def build_masks_images_zip(
         df.to_csv(csv_buf, index=False)
         zf.writestr("summary.csv", csv_buf.getvalue())
 
-    return buf.getvalue()
-
-
-# --- FUNCTIONS FOR DOWNLOADING CLASS CHARACTERISTICS PLOTS
-
-
-def _build_cell_metrics_zip(labels_selected):
-    df = _build_analysis_df()
-    if labels_selected:
-        df = df[df["mask label"].isin(labels_selected)]
-    items = []
-    if not df.empty:
-        items.append(("cell_analysis.csv", df.to_csv(index=False).encode("utf-8")))
-    counts_df = build_image_summary_df()
-    if not counts_df.empty:
-        items.append(
-            ("image_counts.csv", counts_df.to_csv(index=False).encode("utf-8"))
-        )
-    items += st.session_state.get("analysis_plots", [])
-    return build_plots_zip(items) if items else b""
-
-
-def build_plots_zip(plot_paths_or_bytes) -> bytes:
-    """
-    Accepts either list of file paths or list of (name, bytes).
-    """
-    if not plot_paths_or_bytes:
-        return b""
-    buf = io.BytesIO()
-    with ZipFile(buf, mode="w", compression=ZIP_DEFLATED) as zf:
-        for i, item in enumerate(plot_paths_or_bytes):
-            if isinstance(item, (str, Path)) and Path(item).exists():
-                p = Path(item)
-                zf.writestr(p.name, p.read_bytes())
-            elif isinstance(item, tuple) and len(item) == 2:
-                zf.writestr(str(item[0]), item[1])
-            else:
-                # skip unknown
-                pass
     return buf.getvalue()

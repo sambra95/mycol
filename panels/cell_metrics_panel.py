@@ -3,10 +3,10 @@ import streamlit as st
 
 from helpers.upload_download_functions import ordered_keys
 from helpers.cell_metrics_functions import (
-    _build_analysis_df,
-    _violin,
-    _bar,
-    _build_cell_metrics_zip,
+    build_analysis_df,
+    plot_violin,
+    plot_bar,
+    build_cell_metrics_zip,
 )
 
 
@@ -32,7 +32,7 @@ def render_sidebar():
         key="overlay_datapoints",
     )
 
-    df = _build_analysis_df()
+    df = build_analysis_df()
     if df.empty:
         st.info("No masks found.")
         return
@@ -69,7 +69,7 @@ def render_sidebar():
 
     st.download_button(
         "Download cell metrics (.zip)",
-        data=_build_cell_metrics_zip(
+        data=build_cell_metrics_zip(
             tuple(st.session_state.get("analysis_labels") or ())
         ),
         file_name="cell_metrics.zip",
@@ -85,7 +85,7 @@ def render_main():
         st.info("Upload data and label masks first.")
         return False
 
-    df = _build_analysis_df()
+    df = build_analysis_df()
 
     df_filt = df.copy()
     df_filt["mask label"] = (
@@ -109,7 +109,7 @@ def render_main():
     ptype = st.session_state.get("analysis_plot_type", "Violin")
     plots = []
     for col in metrics:
-        fname, fig = (_violin if ptype == "Violin" else _bar)(df_filt, col)
+        fname, fig = (plot_violin if ptype == "Violin" else plot_bar)(df_filt, col)
         st.header(fname)
         st.plotly_chart(fig, use_container_width=True)
         st.session_state[fname] = fig

@@ -70,7 +70,7 @@ def ordered_keys():
     return sorted(st.session_state.images.keys())
 
 
-def current():
+def get_current_rec():
     k = st.session_state.get("current_key")
     return st.session_state.images.get(k) if k is not None else None
 

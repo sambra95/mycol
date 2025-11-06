@@ -12,19 +12,19 @@ import io as IO
 # ---- app helpers ----
 from helpers.state_ops import ordered_keys
 from helpers.densenet_functions import (
-    load_labeled_patches_from_session,
-    fine_tune_densenet,
+    load_labeled_patches,
+    finetune_densenet,
     evaluate_fine_tuned_densenet,
-    _plot_densenet_loss_curve,
-    _build_densenet_zip_bytes,
+    plot_densenet_loss_curve,
+    build_densenet_zip_bytes,
 )
 from helpers.cellpose_functions import (
-    finetune_cellpose_from_records,
-    compute_model_ious,
+    finetune_cellpose,
+    compute_prediction_ious,
     plot_iou_comparison,
     plot_pred_vs_true_counts,
-    _get_cellpose_model_cached,
-    _build_cellpose_zip_bytes,
+    get_cellpose_model,
+    build_cellpose_zip_bytes,
 )
 
 
@@ -35,7 +35,7 @@ ss = st.session_state
 
 
 @st.fragment
-def _densenet_options(key_ns="train_densenet"):
+def render_densenet_options(key_ns="train_densenet"):
     """Light controls - lives outside fragments so changing options refreshes summary."""
     st.header("Fine-tune a DenseNet classifier")
 
@@ -44,7 +44,7 @@ def _densenet_options(key_ns="train_densenet"):
         return False
 
     # show information about the training set
-    densenet_summary_fragment()
+    render_densenet_summary_fragment()
 
     c1, c2, c4 = st.columns(3)
 
@@ -71,12 +71,12 @@ def _densenet_options(key_ns="train_densenet"):
 
 
 @st.fragment
-def densenet_summary_fragment():
+def render_densenet_summary_fragment():
     """Loads patches and shows a simple class frequency table (reruns when the page reruns)."""
     input_size = int(ss.get("dn_input_size"))
 
     # Load patches only for summary; heavy-ish but isolated here
-    X, y, classes = load_labeled_patches_from_session(patch_size=input_size)
+    X, y, classes = load_labeled_patches(patch_size=input_size)
 
     # Count occurrences per class (ensure all classes present)
     counts = np.bincount(y, minlength=len(classes))
@@ -97,7 +97,7 @@ def densenet_summary_fragment():
     )
 
 
-def densenet_train_fragment():
+def render_densenet_train_fragment():
     """Runs the full DenseNet training pipeline when the button is clicked."""
     go = st.button("Fine tune Densenet121", use_container_width=True, type="primary")
     if not go:
@@ -110,14 +110,14 @@ def densenet_train_fragment():
     val_split = 0.2
 
     # fine tune the densenet model
-    history, val_gen, classes = fine_tune_densenet(
+    history, val_gen, classes = finetune_densenet(
         input_size=input_size, batch_size=batch_size, epochs=epochs, val_split=val_split
     )
 
     # evaluate the fine tuned densenet model on validation dataset
     evaluate_fine_tuned_densenet(history=history, val_gen=val_gen, classes=classes)
 
-    ss["dn_zip_bytes"] = _build_densenet_zip_bytes(input_size)
+    ss["dn_zip_bytes"] = build_densenet_zip_bytes(input_size)
 
 
 def show_densenet_training_plots():
@@ -162,7 +162,7 @@ def show_densenet_training_plots():
 # ========== Cellpose: options + training ==========
 
 
-def _cellpose_options(key_ns="train_cellpose"):
+def render_cellpose_options(key_ns="train_cellpose"):
     st.header("Fine-tune a Cellpose segmenter")
 
     if not ordered_keys():
@@ -272,7 +272,7 @@ def _cellpose_options(key_ns="train_cellpose"):
     return True
 
 
-def cellpose_train_fragment():
+def render_cellpose_train_fragment():
     go = st.button("Fine-tune Cellpose", use_container_width=True, type="primary")
     if not go:
         return
@@ -286,7 +286,7 @@ def cellpose_train_fragment():
     channels = ss.get("cellpose_channels")
 
     with st.spinner("Fine-tuning Cellpose…"):
-        train_losses, test_losses, model_name = finetune_cellpose_from_records(
+        train_losses, test_losses, model_name = finetune_cellpose(
             recs,
             base_model=base_model,
             epochs=epochs,
@@ -299,7 +299,7 @@ def cellpose_train_fragment():
         st.session_state["train_losses"] = train_losses
         st.session_state["test_losses"] = test_losses
 
-        st.session_state["cellpose_training_losses"] = _plot_densenet_loss_curve(
+        st.session_state["cellpose_training_losses"] = plot_densenet_loss_curve(
             train_losses, test_losses
         )
 
@@ -434,14 +434,14 @@ def cellpose_train_fragment():
         base_preds, _, _ = base_model.eval(images, channels=channels)
 
         # Fine-tuned model from session BYTES
-        tuned_model = _get_cellpose_model_cached()
+        tuned_model = get_cellpose_model()
         tuned_preds, _, _ = tuned_model.eval(images, channels=channels)
 
         # compare and plot ious pre and post training
-        base_ious = compute_model_ious(
+        base_ious = compute_prediction_ious(
             images=images, masks=masks, model=base_model, channels=channels
         )
-        tuned_ious = compute_model_ious(
+        tuned_ious = compute_prediction_ious(
             images=images, masks=masks, model=tuned_model, channels=channels
         )
         ss["cellpose_iou_comparison"] = plot_iou_comparison(base_ious, tuned_ious)
@@ -458,7 +458,7 @@ def cellpose_train_fragment():
             gt_counts, tuned_counts, title="Tuned Model Predictions"
         )
 
-        ss["cp_zip_bytes"] = _build_cellpose_zip_bytes()
+        ss["cp_zip_bytes"] = build_cellpose_zip_bytes()
 
 
 def show_cellpose_training_plots():

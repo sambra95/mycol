@@ -2,7 +2,7 @@ import streamlit as st
 from helpers.state_ops import (
     ordered_keys,
 )
-from helpers.upload_download_functions import _process_uploads, render_images_form
+from helpers.upload_download_functions import process_uploads, render_images_form
 import os
 import tempfile
 import hashlib
@@ -40,7 +40,7 @@ def render_main():
             ss["mask_suffix"] = mask_suffix.strip() or "_masks"
 
             if files:
-                _process_uploads(files, mask_suffix)
+                process_uploads(files, mask_suffix)
                 ss["uploader_nonce"] = ss.get("uploader_nonce", 0) + 1
                 st.rerun()
     with col2:

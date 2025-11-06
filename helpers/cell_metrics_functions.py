@@ -13,7 +13,7 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED
 
 
-def _violin(df: pd.DataFrame, value_col: str):
+def plot_violin(df: pd.DataFrame, value_col: str):
     sub = df.copy()
     sub["label"] = sub["mask label"].replace("No label", None).fillna("Unlabelled")
     order = sorted(sub["label"].unique(), key=lambda x: (x != "Unlabelled", str(x)))
@@ -89,7 +89,7 @@ def _violin(df: pd.DataFrame, value_col: str):
     return f"{value_col.replace(' ', '_')}", fig
 
 
-def _bar(df: pd.DataFrame, value_col: str):
+def plot_bar(df: pd.DataFrame, value_col: str):
     sub = df.copy()
     sub["label"] = sub["mask label"].replace("No label", None).fillna("Unlabelled")
     order = sorted(sub["label"].unique(), key=lambda x: (x != "Unlabelled", str(x)))
@@ -131,7 +131,7 @@ def _bar(df: pd.DataFrame, value_col: str):
     return f"bar_{value_col.replace(' ', '_')}.png", buf.getvalue()
 
 
-def _build_analysis_df():
+def build_analysis_df():
     rows = []
     for k in ordered_keys():
         rec = st.session_state.images[k]
@@ -213,8 +213,8 @@ def build_image_summary_df():
 # --- FUNCTIONS FOR DOWNLOADING CLASS CHARACTERISTICS PLOTS
 
 
-def _build_cell_metrics_zip(labels_selected):
-    df = _build_analysis_df()
+def build_cell_metrics_zip(labels_selected):
+    df = build_analysis_df()
     if labels_selected:
         df = df[df["mask label"].isin(labels_selected)]
     items = []

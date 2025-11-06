@@ -6,6 +6,12 @@ import tifffile as tiff
 import streamlit as st
 from zipfile import ZipFile
 from pathlib import Path
+from zipfile import ZIP_DEFLATED
+import streamlit as st
+from PIL import ImageDraw
+import pandas as pd
+from helpers.classifying_functions import classes_map_from_labels, create_colour_palette
+from helpers.mask_editing_functions import create_image_mask_overlay
 
 from helpers.state_ops import (
     ordered_keys,
@@ -22,7 +28,7 @@ ss = st.session_state
 # --------------------------------------
 
 
-def _process_uploads(files, mask_suffix):
+def process_uploads(files, mask_suffix):
     if not files:
         return
     # load the images first
@@ -166,18 +172,7 @@ def render_images_form():
 # --------------------------------------
 
 
-from zipfile import ZIP_DEFLATED
-import streamlit as st
-from PIL import ImageDraw
-import pandas as pd
-
-from helpers.classifying_functions import classes_map_from_labels, palette_from_emojis
-from helpers.mask_editing_functions import composite_over_by_class
-
-# --- FUNCTIONS FOR DOWNLOADING ANNOTATED IMAGE DATASETS
-
-
-def _counts_for_rec(rec) -> dict:
+def counts_for_rec(rec) -> dict:
     """Return dict class_name -> count for one record, using rec['labels'] mapping."""
     labels = rec.get("labels", {}) or {}
     # Values in labels can be strings or ints or None; normalize to str
@@ -195,7 +190,7 @@ def build_masks_images_zip(
     with ZipFile(buf, mode="w", compression=ZIP_DEFLATED) as zf:
         # Class color palette (only if overlays requested)
         palette = (
-            palette_from_emojis(
+            create_colour_palette(
                 st.session_state.setdefault("all_classes", ["No label"])
             )
             if include_overlay
@@ -210,7 +205,7 @@ def build_masks_images_zip(
         for k in key_order:
             rec = state_images[k]
             name = Path(rec.get("name", f"{k}")).stem
-            counts = _counts_for_rec(rec)
+            counts = counts_for_rec(rec)
 
             # write mask
             mask = rec.get("masks")
@@ -231,7 +226,7 @@ def build_masks_images_zip(
                 classes_map = classes_map_from_labels(
                     rec.get("masks"), rec.get("labels", {})
                 )
-                img = composite_over_by_class(
+                img = create_image_mask_overlay(
                     img, rec.get("masks"), classes_map, palette, alpha=0.35
                 )
 

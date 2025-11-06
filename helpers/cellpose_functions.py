@@ -15,6 +15,7 @@ import pandas as pd
 from helpers.state_ops import ordered_keys
 from pathlib import Path
 import plotly.io as pio
+import plotly.graph_objects as go
 
 # -----------------------------------------------------#
 # ---------------- IMAGE PREPROCESSING --------------- #
@@ -42,7 +43,7 @@ def normalize_image(image: np.ndarray) -> np.ndarray:
     return im.astype(np.uint8)
 
 
-def preprocess_image_for_cellpose(rec):
+def preprocess_for_cellpose(rec):
     """takes record input and prepares the stored image for cellpose"""
 
     img = rec["image"]
@@ -60,7 +61,7 @@ def preprocess_image_for_cellpose(rec):
     return im_in
 
 
-def process_cellpose_mask_outputs_to_single_array(mask_output, H, W):
+def convert_cellpose_mask_to_single_array(mask_output, H, W):
     """takes mask output from cellpose and converts to a single matrix where different masks are defined by different integers"""
 
     # ---- convert to single (H,W) label image with contiguous ids 1..N ----
@@ -98,7 +99,7 @@ def process_cellpose_mask_outputs_to_single_array(mask_output, H, W):
 
 
 # --- materialize session model bytes to a stable temp path ---
-def _materialize_cellpose_weights_from_session() -> str | None:
+def get_cellpose_weights() -> str | None:
     ss = st.session_state
     b = ss.get("cellpose_model_bytes", None)
     name = ss.get("cellpose_model_name", None)
@@ -117,7 +118,7 @@ def _materialize_cellpose_weights_from_session() -> str | None:
 
 
 # --- cache the loaded Cellpose model so we don't reload every call ---
-def _get_cellpose_model_cached():
+def get_cellpose_model():
     ss = st.session_state
     # tag tracks which bytes are loaded
     tag = (
@@ -129,7 +130,7 @@ def _get_cellpose_model_cached():
     if ss.get("cellpose_model_obj") is not None and ss.get("cellpose_model_tag") == tag:
         return ss["cellpose_model_obj"]
 
-    weights_path = _materialize_cellpose_weights_from_session()
+    weights_path = get_cellpose_weights()
     if weights_path:
         model = models.CellposeModel(pretrained_model=weights_path)
     else:
@@ -141,7 +142,7 @@ def _get_cellpose_model_cached():
     return model
 
 
-def segment_rec_with_cellpose(
+def segment_with_cellpose(
     rec: dict,
     *,
     channels=(0, 0),
@@ -156,9 +157,9 @@ def segment_rec_with_cellpose(
     integer label image (0=background, 1..N=instances). Resets rec['labels'].
     """
 
-    im_in = preprocess_image_for_cellpose(rec)
+    im_in = preprocess_for_cellpose(rec)
 
-    cell_model = _get_cellpose_model_cached()
+    cell_model = get_cellpose_model()
 
     masks_out, flows, styles = cell_model.eval(
         [im_in],
@@ -172,7 +173,7 @@ def segment_rec_with_cellpose(
     mask_output = masks_out[0] if isinstance(masks_out, (list, tuple)) else masks_out
 
     # set record masks to new predicted mask matrix
-    rec["masks"] = process_cellpose_mask_outputs_to_single_array(
+    rec["masks"] = convert_cellpose_mask_to_single_array(
         mask_output, rec["H"], rec["W"]
     )
     # clear any labels in the record (no new masks are labelled)
@@ -186,13 +187,7 @@ def segment_rec_with_cellpose(
 # -----------------------------------------------------#
 
 
-import plotly.graph_objects as go
-import numpy as np
-
-import numpy as np
-
-
-def compute_model_ious(images, masks, model, channels):
+def compute_prediction_ious(images, masks, model, channels):
     """
     Evaluate a Cellpose model on a list of images/masks and return the IoU values per image.
 
@@ -320,7 +315,7 @@ def plot_pred_vs_true_counts(gt_counts, base_counts, title):
 # -----------------------------------------------------#
 
 
-def finetune_cellpose_from_records(
+def finetune_cellpose(
     recs: dict,
     base_model: str,
     epochs=100,
@@ -331,7 +326,7 @@ def finetune_cellpose_from_records(
 ):
     images, masks = [], []
     for k in recs.keys():
-        images.append(preprocess_image_for_cellpose(recs[k]))
+        images.append(preprocess_for_cellpose(recs[k]))
         masks.append(recs[k]["masks"].astype("uint16"))
 
     train_images, test_images, train_masks, test_masks = train_test_split(
@@ -380,7 +375,20 @@ def is_mask(m):
     return isinstance(m, np.ndarray) and m.any()
 
 
-def _build_cellpose_zip_bytes():
+# Plots
+def add_plotly_as_png_to_zip(fig_key, zip_file, out_path, default_w=900, default_h=400):
+    fig = st.session_state[fig_key]
+    png = pio.to_image(
+        fig,
+        format="png",
+        scale=3,
+        width=int(getattr(fig.layout, "width", default_w) or default_w),
+        height=int(getattr(fig.layout, "height", default_h) or default_h),
+    )
+    zip_file.writestr(out_path, png)
+
+
+def build_cellpose_zip_bytes():
     """Assemble the ZIP archive from session state data."""
 
     ok = ordered_keys()
@@ -430,25 +438,17 @@ def _build_cellpose_zip_bytes():
             Image.fromarray(np.asarray(rec["masks"])).save(c, "TIFF")
             z.writestr(f"masks/{img_name}_masks.tif", c.getvalue())
 
-        # Plots
-        def _add_png(fig_key, out_path, default_w=900, default_h=400):
-            fig = ss[fig_key]
-            png = pio.to_image(
-                fig,
-                format="png",
-                scale=3,
-                width=int(getattr(fig.layout, "width", default_w) or default_w),
-                height=int(getattr(fig.layout, "height", default_h) or default_h),
-            )
-            z.writestr(out_path, png)
-
-        _add_png("cellpose_training_losses", "plots/cellpose_training_losses.png")
-        _add_png("cellpose_iou_comparison", "plots/cellpose_iou_comparison.png")
-        _add_png(
+        add_plotly_as_png_to_zip(
+            "cellpose_training_losses", z, "plots/cellpose_training_losses.png"
+        )
+        add_plotly_as_png_to_zip(
+            "cellpose_iou_comparison", z, "plots/cellpose_iou_comparison.png"
+        )
+        add_plotly_as_png_to_zip(
             "cellpose_original_counts_comparison",
             "plots/cellpose_original_counts_comparison.png",
         )
-        _add_png(
+        add_plotly_as_png_to_zip(
             "cellpose_tuned_counts_comparison",
             "plots/cellpose_tuned_counts_comparison.png",
         )

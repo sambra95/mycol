@@ -11,9 +11,9 @@ from streamlit_drawable_canvas import st_canvas
 from streamlit_image_coordinates import streamlit_image_coordinates
 
 from helpers import config as cfg  # CKPT_PATH, CFG_PATH
-from helpers.state_ops import ordered_keys, current
-from helpers.classifying_functions import classes_map_from_labels, palette_from_emojis
-from helpers.cellpose_functions import segment_rec_with_cellpose, normalize_image
+from helpers.state_ops import ordered_keys, get_current_rec
+from helpers.classifying_functions import classes_map_from_labels, create_colour_palette
+from helpers.cellpose_functions import segment_with_cellpose, normalize_image
 
 # -----------------------------------------------------#
 # --------------- MASK HELPERS SIDEBAR --------------- #
@@ -79,31 +79,31 @@ def integrate_new_mask(original: np.ndarray, new_binary: np.ndarray):
 # -----------------------------------------------------#
 
 
-def _segment_current_and_refresh():
+def segment_current_and_refresh():
     """calls cellpose to segment the current image"""
-    rec = current()
+    rec = get_current_rec()
     if rec is not None:
-        params = _read_cellpose_hparams_from_state()
-        segment_rec_with_cellpose(rec, **params)
+        params = get_cellpose_hparams_from_state()
+        segment_with_cellpose(rec, **params)
         st.session_state["edit_canvas_nonce"] += 1
     st.rerun()
 
 
-def _batch_segment_and_refresh():
+def batch_segment_and_refresh():
     """calls cellpose to segment all images with progress bar"""
     ok = ordered_keys()
-    params = _read_cellpose_hparams_from_state()
+    params = get_cellpose_hparams_from_state()
     n = len(ok)
     pb = st.progress(0.0, text="Starting…")
     for i, k in enumerate(ok, 1):
-        segment_rec_with_cellpose(st.session_state.images.get(k), **params)
+        segment_with_cellpose(st.session_state.images.get(k), **params)
         pb.progress(i / n, text=f"Segmented {i}/{n}")
     pb.empty()
     st.session_state["edit_canvas_nonce"] += 1
     st.rerun()
 
 
-def _read_cellpose_hparams_from_state():
+def get_cellpose_hparams_from_state():
     """calls hparam values from session state"""
     # Build kwargs matching segment_rec_with_cellpose signature
     ch1 = int(st.session_state.get("cp_ch1"))
@@ -128,7 +128,7 @@ def _read_cellpose_hparams_from_state():
 # ============================================================
 
 
-def boxes_to_fabric_rects(boxes, scale=1.0) -> Dict[str, Any]:
+def render_sam2_boxes(boxes, scale=1.0) -> Dict[str, Any]:
     """draw box for sam2 mask predictions on canvas rendering"""
     rects = []
     for x0, y0, x1, y1 in boxes:
@@ -166,7 +166,7 @@ def draw_boxes_overlay(image_u8, boxes, alpha=0.25, outline_px=2):
     return np.array(Image.alpha_composite(base, overlay).convert("RGB"), dtype=np.uint8)
 
 
-def _prep_for_sam(img: np.ndarray) -> np.ndarray:
+def prep_image_for_sam2(img: np.ndarray) -> np.ndarray:
     """preprocess image into correct format for mask prediction with sam2"""
     a = img
     if a.ndim == 2:
@@ -180,7 +180,7 @@ def _prep_for_sam(img: np.ndarray) -> np.ndarray:
     return a
 
 
-def _run_sam2_on_boxes(cur: dict):
+def segment_with_sam2(cur: dict):
     """input is record for prediction. boxes to guide prediction will be extracted wtih "boxes" key.
     Return a list of (H,W) boolean masks (best mask per box."""
     boxes = np.asarray(cur.get("boxes", []), dtype=np.float32)
@@ -210,7 +210,7 @@ def _run_sam2_on_boxes(cur: dict):
     )
     predictor = SAM2ImagePredictor(sam)
 
-    img_float = _prep_for_sam(cur["image"])
+    img_float = prep_image_for_sam2(cur["image"])
     amp = (
         torch.autocast("cuda", dtype=torch.bfloat16)
         if device == "cuda"
@@ -286,7 +286,7 @@ def set_current_by_index(idx: int):
 
 
 @st.fragment
-def cellpose_hyperparameters_fragment():
+def render_cellpose_hyperparameters_fragment():
 
     # Channels (two ints)
     st.number_input(
@@ -364,8 +364,8 @@ def cellpose_hyperparameters_fragment():
         st.session_state["cp_diameter"] = None
 
 
-def box_tools_fragment(key_ns="side"):
-    rec = current()
+def render_box_tools_fragment(key_ns="side"):
+    rec = get_current_rec()
     row = st.container()
     c1, c2 = row.columns([1, 1])
 
@@ -396,7 +396,7 @@ def box_tools_fragment(key_ns="side"):
     if st.button(
         "Segment cells in boxes", use_container_width=True, key=f"{key_ns}_predict"
     ):
-        new_masks = _run_sam2_on_boxes(rec)
+        new_masks = segment_with_sam2(rec)
         for mask in new_masks:
             inst, new_id = integrate_new_mask(rec["masks"], mask)
             if new_id is not None:
@@ -410,8 +410,8 @@ def box_tools_fragment(key_ns="side"):
         st.rerun()
 
 
-def mask_tools_fragment(key_ns="side"):
-    rec = current()
+def render_mask_tools_fragment(key_ns="side"):
+    rec = get_current_rec()
     row = st.container()
     c1, c2 = row.columns([1, 1])
 
@@ -450,16 +450,16 @@ def mask_tools_fragment(key_ns="side"):
 # -----------------------------------------------------#
 
 
-def composite_over_by_class(image_u8, label_inst, classes_map, palette, alpha=0.5):
+def create_image_mask_overlay(image, mask, classes_map, palette, alpha=0.5):
     """
     image_u8:  uint8 RGB image, shape (H, W, 3)
-    label_inst: uint{8,16,32} label image, shape (H, W), 0=background, 1..N=instances
+    mask: uint{8,16,32} label image, shape (H, W), 0=background, 1..N=instances
     classes_map: dict[int -> class_name]
     palette: dict[class_name -> (r,g,b) in 0..1]
     alpha: overlay opacity for filled region
     """
-    H, W = image_u8.shape[:2]
-    inst = np.asarray(label_inst)
+    H, W = image.shape[:2]
+    inst = np.asarray(mask)
 
     if inst.ndim != 2:
         raise ValueError("label_inst must be a 2D label image (H, W)")
@@ -470,9 +470,9 @@ def composite_over_by_class(image_u8, label_inst, classes_map, palette, alpha=0.
         )
 
     if inst.size == 0 or not np.any(inst):
-        return image_u8
+        return image
 
-    out = image_u8.astype(np.float32) / 255.0
+    out = image.astype(np.float32) / 255.0
 
     ids = np.unique(inst)
     ids = ids[ids != 0]  # skip background
@@ -501,17 +501,17 @@ def composite_over_by_class(image_u8, label_inst, classes_map, palette, alpha=0.
     return (np.clip(out, 0, 1) * 255).astype(np.uint8)
 
 
-def _image_display(rec, scale):
+def create_image_display(rec, scale):
     disp_w, disp_h = int(rec["W"] * scale), int(rec["H"] * scale)
 
-    M = rec.get("masks")
-    has_instances = isinstance(M, np.ndarray) and M.ndim == 2 and M.any()
+    mask = rec.get("masks")
+    has_instances = isinstance(mask, np.ndarray) and mask.ndim == 2 and mask.any()
 
     if st.session_state.get("show_overlay", False) and has_instances:
         labels = st.session_state.setdefault("all_classes", ["No label"])
-        palette = palette_from_emojis(labels)
+        palette = create_colour_palette(labels)
         classes_map = classes_map_from_labels(rec["masks"], rec["labels"])
-        base_img = composite_over_by_class(
+        base_img = create_image_mask_overlay(
             rec["image"], rec["masks"], classes_map, palette, alpha=0.35
         )
     else:
@@ -526,8 +526,8 @@ def _image_display(rec, scale):
 
 
 @st.fragment
-def display_and_interact_fragment(key_ns="edit", scale=1.5):
-    rec = current()
+def render_display_and_interact_fragment(key_ns="edit", scale=1.5):
+    rec = get_current_rec()
     if rec is None:
         st.warning("Upload an image in **Upload data** first.")
         return
@@ -576,7 +576,9 @@ def display_and_interact_fragment(key_ns="edit", scale=1.5):
             rec_for_disp = dict(rec)
             rec_for_disp["image"] = im
 
-        base_img, display_for_ui, disp_w, disp_h = _image_display(rec_for_disp, scale)
+        base_img, display_for_ui, disp_w, disp_h = create_image_display(
+            rec_for_disp, scale
+        )
         mode = st.session_state.get("interaction_mode", "Draw box")
 
         M = rec.get("masks")
@@ -628,7 +630,7 @@ def display_and_interact_fragment(key_ns="edit", scale=1.5):
         # click and hold to draw boxes on the image
         elif mode == "Draw box":
             bg = Image.fromarray(display_for_ui).convert("RGB")
-            initial_json = boxes_to_fabric_rects(rec["boxes"], scale=scale)
+            initial_json = render_sam2_boxes(rec["boxes"], scale=scale)
             num_initial = len(initial_json.get("objects", []))
             canvas_result = st_canvas(
                 fill_color="rgba(0, 0, 255, 0.25)",

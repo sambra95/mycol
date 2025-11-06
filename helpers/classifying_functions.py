@@ -2,7 +2,7 @@
 import numpy as np
 import streamlit as st
 
-from helpers.state_ops import ordered_keys, current
+from helpers.state_ops import ordered_keys, get_current_rec
 from helpers.densenet_functions import classify_cells_with_densenet
 
 ss = st.session_state
@@ -20,7 +20,6 @@ PALETTE_HEX = [
     "#CAE0AB",  # 17
     "#F6C141",  # 20
 ]
-_DEFAULT_FALLBACK_HEX = "#777777"
 
 
 def _hex_to_rgb01(hx: str) -> tuple[float, float, float]:
@@ -33,7 +32,7 @@ def color_hex_for(name: str) -> str:
     Reuses the palette without hashing collisions.
     """
     if not name or name == "No label":
-        return _DEFAULT_FALLBACK_HEX
+        return "#777777"
     cmap = st.session_state.setdefault("class_colors", {})
     if name not in cmap:
         # pick the first palette color not currently used; wrap if all are used
@@ -45,7 +44,7 @@ def color_hex_for(name: str) -> str:
     return cmap[name]
 
 
-def _color_chip_md(hex_color: str, size: int = 14) -> str:
+def color_chip_md(hex_color: str, size: int = 14) -> str:
     return (
         f'<span style="display:inline-block;'
         f"width:{size}px;height:{size}px;margin-top:2px;"
@@ -54,29 +53,26 @@ def _color_chip_md(hex_color: str, size: int = 14) -> str:
     )
 
 
-def _rename_class_from_input(old_key: str, new_key: str):
+def rename_class_from_input(old_key: str, new_key: str):
     """Callback: read selected old class and typed new class from session_state and rename."""
 
-    def _cb():
-        ss = st.session_state
-        old = ss.get(old_key)
-        new = (ss.get(new_key, "") or "").strip()
-        if not old or not new or old == new:
-            return
+    ss = st.session_state
+    old = ss.get(old_key)
+    new = (ss.get(new_key, "") or "").strip()
+    if not old or not new or old == new:
+        return
 
-        # Keep the selection stable across reruns:
-        # set the selectbox's value to the *new* name so Streamlit won't
-        # fall back to the first option when `old` disappears from options.
-        ss[old_key] = new
-        ss[new_key] = ""
+    # Keep the selection stable across reruns:
+    # set the selectbox's value to the *new* name so Streamlit won't
+    # fall back to the first option when `old` disappears from options.
+    ss[old_key] = new
+    ss[new_key] = ""
 
-        # Validate + apply (this may call st.rerun() internally)
-        rename_class_everywhere(old, new)
-
-    return _cb
+    # Validate + apply (this may call st.rerun() internally)
+    rename_class_everywhere(old, new)
 
 
-def _all_image_records():
+def yield_all_image_records():
     """Yield all image records from session state safely."""
     ims = st.session_state.get("images", {}) or {}
     for k in ordered_keys():
@@ -115,7 +111,7 @@ def rename_class_everywhere(old_name: str, new_name: str):
 
     # --- Update labels in every image record ---
     changed_labels = 0
-    for _, rec in _all_image_records():
+    for _, rec in yield_all_image_records():
         lab = rec.get("labels")
         if isinstance(lab, dict):
             # Re-assign values from old_name -> new_name
@@ -175,7 +171,7 @@ def remove_class_everywhere(name: str):
 
     # Unlabel everywhere
     changed = 0
-    for _, rec in _all_image_records():
+    for _, rec in yield_all_image_records():
         lab = rec.get("labels")
         if isinstance(lab, dict):
             to_update = [iid for iid, cname in lab.items() if cname == name]
@@ -193,7 +189,7 @@ def remove_class_everywhere(name: str):
     st.rerun()
 
 
-def palette_from_emojis(class_names):
+def create_colour_palette(class_names):
     """
     Return {class_name: (r,g,b)} in 0..1 using the fixed palette.
     Includes '__unlabeled__' as white.
@@ -219,13 +215,13 @@ def classes_map_from_labels(masks, labels):
     return classes_map
 
 
-def _row(name: str, count: int, key: str, mode_ns: str = "side"):
+def create_row(name: str, count: int, key: str, mode_ns: str = "side"):
     # icon | name | count | select |
     c1, c2, c3, c4 = st.columns([1, 5, 2, 3])
     if name == "No label":
         c1.write(" ")
     else:
-        c1.markdown(_color_chip_md(color_hex_for(name)), unsafe_allow_html=True)
+        c1.markdown(color_chip_md(color_hex_for(name)), unsafe_allow_html=True)
     c2.write(f"**{name}**")
     c3.write(str(count))
 
@@ -242,7 +238,7 @@ def _row(name: str, count: int, key: str, mode_ns: str = "side"):
     )
 
 
-def _add_label_from_input(labels, new_label_ss):
+def add_label_from_input(labels, new_label_ss):
     new_label = new_label_ss.strip()
     if not new_label:
         return
@@ -260,7 +256,7 @@ def _add_label_from_input(labels, new_label_ss):
 
 @st.fragment
 def classify_actions_fragment():
-    rec = current()
+    rec = get_current_rec()
 
     col1, col2 = st.columns(2)
     col1.button(
@@ -275,13 +271,13 @@ def classify_actions_fragment():
         "Batch classify cells",
         key="btn_batch_classify_cellpose",
         use_container_width=True,
-        on_click=_batch_classify_and_refresh,
+        on_click=batch_classify_and_refresh,
         help="Batch classify all masks in all images with the loaded Densenet121 model.",
         disabled=st.session_state["densenet_model"] == None,
     )
 
 
-def _batch_classify_and_refresh():
+def batch_classify_and_refresh():
     """classify masks in the all images"""
     ok = ordered_keys()
     if not ok:
@@ -311,16 +307,20 @@ def class_selection_fragment():
         ss["side_current_class"] = pc
     ss.setdefault("side_current_class", ss["all_classes"][0])
 
-    rec = current()
+    rec = get_current_rec()
     labels = ss.setdefault("all_classes", ["No label"])
     labdict = rec.get("labels", {}) if isinstance(rec.get("labels"), dict) else {}
 
     # Unlabel row
-    _row("No label", sum(1 for v in labdict.values() if v is None), key="use_unlabel")
+    create_row(
+        "No label", sum(1 for v in labdict.values() if v is None), key="use_unlabel"
+    )
 
     # Actual classes
     for name in [c for c in labels if c != "No label"]:
-        _row(name, sum(1 for v in labdict.values() if v == name), key=f"use_{name}")
+        create_row(
+            name, sum(1 for v in labdict.values() if v == name), key=f"use_{name}"
+        )
 
     if st.button(
         key="clear_labels_btn", use_container_width=True, label="Clear mask labels"
@@ -341,7 +341,7 @@ def class_manage_fragment(key_ns="side"):
         "",
         key="side_new_label",
         placeholder="Enter a new class here",
-        on_change=_add_label_from_input(labels, ss.get("side_new_label", "")),
+        on_change=add_label_from_input(labels, ss.get("side_new_label", "")),
     )
 
     # --- Delete existing class (now as dropdown) ---
@@ -369,7 +369,7 @@ def class_manage_fragment(key_ns="side"):
             "New label",
             key=f"{key_ns}_rename_to",
             placeholder="Type the new class name and press Enter",
-            on_change=_rename_class_from_input(
+            on_change=rename_class_from_input(
                 f"{key_ns}_rename_from", f"{key_ns}_rename_to"
             ),
         )

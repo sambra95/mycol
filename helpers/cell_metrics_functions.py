@@ -22,9 +22,8 @@ def _hex_for_plot_label(label: str) -> str:
 
 
 def plot_violin(df: pd.DataFrame, value_col: str):
-    sub = df.copy()
-    sub["label"] = sub["mask label"].replace("No label", None).fillna("Unlabelled")
-    order = sorted(sub["label"].unique(), key=lambda x: (x != "Unlabelled", str(x)))
+    df["label"] = df["mask label"].replace("No label", None).fillna("Unlabelled")
+    order = sorted(df["label"].unique(), key=lambda x: (x != "Unlabelled", str(x)))
 
     # use mask colors
     color_map = {lab: _hex_for_plot_label(lab) for lab in order}
@@ -33,8 +32,8 @@ def plot_violin(df: pd.DataFrame, value_col: str):
     fig = go.Figure()
 
     for lab in order:
-        idx = sub["label"] == lab
-        vals = sub.loc[idx, value_col]
+        idx = df["label"] == lab
+        vals = df.loc[idx, value_col]
         x_vals = [lab] * len(vals)
 
         # violin body with the mask-matched color
@@ -56,8 +55,8 @@ def plot_violin(df: pd.DataFrame, value_col: str):
         )
 
         if show_points and len(vals) > 0:
-            imgs = sub.loc[idx, "image"].astype(str).to_numpy()
-            masks = sub.loc[idx, "mask #"].astype(str).to_numpy()
+            imgs = df.loc[idx, "image"].astype(str).to_numpy()
+            masks = df.loc[idx, "mask #"].astype(str).to_numpy()
             texts = [f"{im}_patch{mk}" for im, mk in zip(imgs, masks)]
 
             fig.add_trace(
@@ -104,9 +103,8 @@ def plot_violin(df: pd.DataFrame, value_col: str):
 
 
 def plot_bar(df: pd.DataFrame, value_col: str):
-    sub = df.copy()
-    sub["label"] = sub["mask label"].replace("No label", None).fillna("Unlabelled")
-    order = sorted(sub["label"].unique(), key=lambda x: (x != "Unlabelled", str(x)))
+    df["label"] = df["mask label"].replace("No label", None).fillna("Unlabelled")
+    order = sorted(df["label"].unique(), key=lambda x: (x != "Unlabelled", str(x)))
     title_y = value_col.replace("_", " ").title()
 
     # numeric x positions and colors
@@ -114,7 +112,7 @@ def plot_bar(df: pd.DataFrame, value_col: str):
     colors = [_hex_for_plot_label(lab) for lab in order]
 
     # bar means + SD
-    g = sub.groupby("label")[value_col]
+    g = df.groupby("label")[value_col]
     means = g.mean().reindex(order).to_numpy()
     sds = g.std().reindex(order).fillna(0).to_numpy()
 
@@ -129,7 +127,7 @@ def plot_bar(df: pd.DataFrame, value_col: str):
         hovertemplate="<b>%{x}</b><br>" + title_y + ": %{y:.2f}<extra></extra>",
     )
 
-    traces = add_data_points_to_plot(bar, order, sub, value_col, xpos)
+    traces = add_data_points_to_plot(bar, order, df, value_col, xpos)
 
     fig = go.Figure(traces, layout=dict(barcornerradius=10))
     fig.update_layout(

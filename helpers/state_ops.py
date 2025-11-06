@@ -60,6 +60,7 @@ def ensure_global_state() -> None:
     # class defaults
     ss.setdefault("all_classes", ["No label"])
     ss.setdefault("side_current_class", ss["all_classes"][0])
+    ss.setdefault("cp_grid_results_df", None)
 
 
 def stem(p: str) -> str:

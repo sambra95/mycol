@@ -28,7 +28,7 @@ from sklearn.metrics import (
 
 # ---- bring in existing app helpers ----
 from helpers.state_ops import ordered_keys
-from helpers.cellpose_functions import normalize_image
+from helpers.cellpose_functions import normalize_image, add_plotly_as_png_to_zip
 
 ss = st.session_state
 
@@ -290,7 +290,7 @@ def build_densenet(input_shape=(64, 64, 3), num_classes=2):
 # -------------------------------
 
 
-def load_labeled_patches_from_session(patch_size: int = 64):
+def load_labeled_patches(patch_size: int = 64):
     """
     Build X, y from all loaded images with labels.
     """
@@ -379,9 +379,9 @@ class AugSequence(Sequence):
         return Xo, yb
 
 
-def fine_tune_densenet(input_size, batch_size, epochs, val_split):
+def finetune_densenet(input_size, batch_size, epochs, val_split):
     # Load data
-    X, y, classes = load_labeled_patches_from_session(patch_size=input_size)
+    X, y, classes = load_labeled_patches(patch_size=input_size)
     if X.shape[0] < 2 or len(np.unique(y)) < 2:
         st.warning("Need at least 2 samples and 2 classes. Add more labeled cells.")
         return
@@ -475,7 +475,7 @@ def evaluate_fine_tuned_densenet(history, val_gen, classes):
     # 5a) plot densenet training losses and save to session state
     train_losses = history.history.get("loss")
     val_losses = history.history.get("val_loss", [])
-    ss["densenet_training_losses"] = _plot_densenet_loss_curve(train_losses, val_losses)
+    ss["densenet_training_losses"] = plot_densenet_loss_curve(train_losses, val_losses)
 
     # 5b) plots training metrics and add to session state
     metrics = {
@@ -483,11 +483,11 @@ def evaluate_fine_tuned_densenet(history, val_gen, classes):
         "Precision": prec_m,
         "F1": f1_m,
     }
-    ss["densenet_training_metrics"] = _plot_densenet_metrics(metrics)
+    ss["densenet_training_metrics"] = plot_densenet_metrics(metrics)
 
     # 5c) plot confusion matrix and add to session state
     cm = confusion_matrix(y_true, y_pred, labels=np.arange(len(classes)))
-    st.session_state["densenet_confusion_matrix"] = _plot_confusion_matrix(cm, classes)
+    st.session_state["densenet_confusion_matrix"] = plot_confusion_matrix(cm, classes)
 
 
 # -------------------------------
@@ -495,7 +495,7 @@ def evaluate_fine_tuned_densenet(history, val_gen, classes):
 # -------------------------------
 
 
-def _plot_confusion_matrix(cm, class_names):
+def plot_confusion_matrix(cm, class_names):
     """
     Interactive confusion matrix using Plotly.
     - count + % annotated in each cell
@@ -533,7 +533,7 @@ def _plot_confusion_matrix(cm, class_names):
     return fig
 
 
-def _plot_densenet_loss_curve(train_losses, test_losses):
+def plot_densenet_loss_curve(train_losses, test_losses):
     epochs = list(range(1, len(train_losses) + 1))
     fig = go.Figure()
     fig.add_scatter(
@@ -565,7 +565,7 @@ def _plot_densenet_loss_curve(train_losses, test_losses):
     return fig
 
 
-def _plot_densenet_metrics(metrics):
+def plot_densenet_metrics(metrics):
     labels, values = list(metrics.keys()), list(metrics.values())
     fig = go.Figure()
     fig.add_bar(
@@ -590,7 +590,7 @@ def _plot_densenet_metrics(metrics):
     return fig
 
 
-def _array_to_png_bytes(arr: np.ndarray) -> bytes:
+def array_to_png_bytes(arr: np.ndarray) -> bytes:
     """Convert float/uint arrays to PNG bytes (3-channel)."""
     a = arr
     if a.ndim == 2:
@@ -609,8 +609,8 @@ def _array_to_png_bytes(arr: np.ndarray) -> bytes:
     return bio.getvalue()
 
 
-def build_patchset_zip_from_session(patch_size: int = 64) -> bytes | None:
-    X, y, classes = load_labeled_patches_from_session(patch_size=patch_size)
+def build_patchset_zip(patch_size: int = 64) -> bytes | None:
+    X, y, classes = load_labeled_patches(patch_size=patch_size)
     if X.shape[0] == 0:
         return None
 
@@ -629,7 +629,7 @@ def build_patchset_zip_from_session(patch_size: int = 64) -> bytes | None:
                 if 0 <= label_idx < len(classes)
                 else f"class{label_idx}"
             )
-            zf.writestr(f"cell_patches/{fname}", _array_to_png_bytes(X[i]))
+            zf.writestr(f"cell_patches/{fname}", array_to_png_bytes(X[i]))
             rows.append(
                 {"filename": fname, "label_idx": label_idx, "label": label_name}
             )
@@ -640,10 +640,10 @@ def build_patchset_zip_from_session(patch_size: int = 64) -> bytes | None:
     return buf.getvalue()
 
 
-def _build_densenet_zip_bytes(psize):
+def build_densenet_zip_bytes(psize):
     """Assemble the DenseNet training ZIP from session state. Returns bytes or None."""
     ss = st.session_state
-    pzip = build_patchset_zip_from_session(psize)
+    pzip = build_patchset_zip(psize)
     if not pzip:
         return None
 
@@ -684,24 +684,17 @@ def _build_densenet_zip_bytes(psize):
             for n in zin.namelist():
                 zout.writestr(n, zin.read(n))
 
-            # Plots
-            def _add_png(fig_key, out_path, default_w=900, default_h=400):
-                fig = ss[fig_key]
-                png = pio.to_image(
-                    fig,
-                    format="png",
-                    scale=3,
-                    width=int(getattr(fig.layout, "width", default_w) or default_w),
-                    height=int(getattr(fig.layout, "height", default_h) or default_h),
-                )
-                zout.writestr(out_path, png)
-
-            _add_png("densenet_training_losses", "plots/densenet_training_losses.png")
-            _add_png(
-                "densenet_training_metrics", "plots/densenet_performance_metrics.png"
+            add_plotly_as_png_to_zip(
+                "densenet_training_losses", zout, "plots/densenet_training_losses.png"
             )
-            _add_png(
+            add_plotly_as_png_to_zip(
+                "densenet_training_metrics",
+                zout,
+                "plots/densenet_performance_metrics.png",
+            )
+            add_plotly_as_png_to_zip(
                 "densenet_confusion_matrix",
+                zout,
                 "plots/densenet_confusion.png",
                 default_w=800,
                 default_h=600,

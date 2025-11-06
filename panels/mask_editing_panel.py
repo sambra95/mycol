@@ -3,12 +3,12 @@ import streamlit as st
 
 from helpers.state_ops import ordered_keys
 from helpers.mask_editing_functions import (
-    cellpose_hyperparameters_fragment,
-    box_tools_fragment,
-    mask_tools_fragment,
-    display_and_interact_fragment,
-    _segment_current_and_refresh,
-    _batch_segment_and_refresh,
+    render_cellpose_hyperparameters_fragment,
+    render_box_tools_fragment,
+    render_mask_tools_fragment,
+    render_display_and_interact_fragment,
+    segment_current_and_refresh,
+    batch_segment_and_refresh,
 )
 from helpers.classifying_functions import (
     classify_actions_fragment,
@@ -38,7 +38,7 @@ def render_segment_sidebar(*, key_ns: str = "side"):
                 help="Segment this image with Cellpose.",
                 disabled=st.session_state["cellpose_model_bytes"] == None,
             ):
-                _segment_current_and_refresh()
+                segment_current_and_refresh()
         with col2:
             if st.button(
                 "Batch segment with Cellpose",
@@ -47,13 +47,13 @@ def render_segment_sidebar(*, key_ns: str = "side"):
                 help="Segment all uploaded images with Cellpose.",
                 disabled=st.session_state["cellpose_model_bytes"] == None,
             ):
-                _batch_segment_and_refresh()
+                batch_segment_and_refresh()
 
         with st.expander(
             "Edit Cellpose Hyperparameters",
             expanded=False,
         ):
-            cellpose_hyperparameters_fragment()
+            render_cellpose_hyperparameters_fragment()
 
         st.subheader("Segment individual cells:")
 
@@ -62,14 +62,14 @@ def render_segment_sidebar(*, key_ns: str = "side"):
             use_container_width=True,
             help="Draw boxes and click segment to use SAM2 to segment individual cells.",
         ):
-            box_tools_fragment(key_ns)
+            render_box_tools_fragment(key_ns)
 
         with st.popover(
             "Manually segment cells",
             use_container_width=True,
             help="Manually add and remove cell masks.",
         ):
-            mask_tools_fragment(key_ns)
+            render_mask_tools_fragment(key_ns)
 
 
 def render_classify_sidebar(*, key_ns: str = "side"):
@@ -89,7 +89,7 @@ def render_classify_sidebar(*, key_ns: str = "side"):
 
 def render_main(*, key_ns: str = "edit"):
 
-    display_and_interact_fragment(key_ns=key_ns, scale=1.5)
+    render_display_and_interact_fragment(key_ns=key_ns, scale=1.5)
 
 
 def render_download_button():

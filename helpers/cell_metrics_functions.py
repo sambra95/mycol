@@ -33,7 +33,8 @@ def plot_violin(df: pd.DataFrame, value_col: str):
     fig = go.Figure()
 
     for lab in order:
-        vals = sub.loc[sub["label"] == lab, value_col]
+        idx = sub["label"] == lab
+        vals = sub.loc[idx, value_col]
         x_vals = [lab] * len(vals)
 
         # violin body with the mask-matched color
@@ -46,7 +47,7 @@ def plot_violin(df: pd.DataFrame, value_col: str):
                 box_visible=True,
                 meanline_visible=True,
                 line_color="black",
-                fillcolor=color_map[lab],  # <-- same as masks
+                fillcolor=color_map[lab],
                 opacity=0.85,
                 points=False,
                 hoverinfo="skip",
@@ -55,6 +56,10 @@ def plot_violin(df: pd.DataFrame, value_col: str):
         )
 
         if show_points and len(vals) > 0:
+            imgs = sub.loc[idx, "image"].astype(str).to_numpy()
+            masks = sub.loc[idx, "mask #"].astype(str).to_numpy()
+            texts = [f"{im}_patch{mk}" for im, mk in zip(imgs, masks)]
+
             fig.add_trace(
                 go.Violin(
                     x=x_vals,
@@ -75,6 +80,9 @@ def plot_violin(df: pd.DataFrame, value_col: str):
                         color="black",
                         line=dict(width=0.3, color="black"),
                     ),
+                    text=texts,  # per-point labels
+                    hovertemplate="Image: %{text}<extra></extra>",
+                    hoveron="points",
                     showlegend=False,
                 )
             )
@@ -121,8 +129,34 @@ def plot_bar(df: pd.DataFrame, value_col: str):
         hovertemplate="<b>%{x}</b><br>" + title_y + ": %{y:.2f}<extra></extra>",
     )
 
+    traces = add_data_points_to_plot(bar, order, sub, value_col, xpos)
+
+    fig = go.Figure(traces, layout=dict(barcornerradius=10))
+    fig.update_layout(
+        xaxis=dict(
+            tickvals=xpos,
+            ticktext=order,
+            showline=True,
+            linecolor="black",
+            gridcolor="rgba(0,0,0,0.1)",
+        ),
+        yaxis=dict(
+            title=title_y, showline=True, linecolor="black", gridcolor="rgba(0,0,0,0.1)"
+        ),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        margin=dict(l=40, r=40, t=40, b=40),
+        bargap=0.3,
+        height=500,
+        showlegend=False,
+    )
+
+    return f"bar_{value_col.replace(' ', '_')}.png", fig
+
+
+def add_data_points_to_plot(plot, order, sub, value_col, xpos):
     # jittered points per category (optional)
-    traces = [bar]
+    traces = [plot]
     for i, lab in enumerate(order):
         idx = sub["label"] == lab
         ys = sub.loc[idx, value_col].to_numpy()
@@ -153,27 +187,7 @@ def plot_bar(df: pd.DataFrame, value_col: str):
             )
         )
 
-    fig = go.Figure(traces, layout=dict(barcornerradius=10))
-    fig.update_layout(
-        xaxis=dict(
-            tickvals=xpos,
-            ticktext=order,
-            showline=True,
-            linecolor="black",
-            gridcolor="rgba(0,0,0,0.1)",
-        ),
-        yaxis=dict(
-            title=title_y, showline=True, linecolor="black", gridcolor="rgba(0,0,0,0.1)"
-        ),
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-        margin=dict(l=40, r=40, t=40, b=40),
-        bargap=0.3,
-        height=500,
-        showlegend=False,
-    )
-
-    return f"bar_{value_col.replace(' ', '_')}.png", fig
+    return traces
 
 
 def build_analysis_df():

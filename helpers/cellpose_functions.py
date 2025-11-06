@@ -222,7 +222,7 @@ def plot_iou_comparison(base_ious, tuned_ious):
         np.std(tuned_ious, ddof=1) if len(tuned_ious) > 1 else 0.0,
     ]
 
-    fig = go.Figure()
+    fig = go.Figure(layout=dict(barcornerradius=10))
     fig.add_bar(
         x=x,
         y=means,
@@ -371,7 +371,7 @@ def finetune_cellpose(
     return train_losses, test_losses, model_name
 
 
-def is_mask(m):
+def is_not_empty_mask(m):
     return isinstance(m, np.ndarray) and m.any()
 
 

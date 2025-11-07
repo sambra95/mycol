@@ -16,7 +16,7 @@ from helpers.state_ops import ensure_global_state
 
 ensure_global_state()
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
-configure_tf_cpu_only()
+configure_tf_cpu_only() # ! throws an error with the latest installation of TF 2.20
 # common_boot()
 
 

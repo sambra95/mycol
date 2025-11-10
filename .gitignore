@@ -29,3 +29,5 @@ panels/.DS_Store
 intro_images/ChatGPT Image Nov 4, 2025, 06_34_18 PM.png
 demo_data/classifier.keras
 demo_data/cellpose_model.pt
+helpers/max_internal_length.ipynb
+notebooks/max_internal_length.ipynb

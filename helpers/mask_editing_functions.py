@@ -387,7 +387,10 @@ def render_box_tools_fragment(key_ns="side"):
         st.rerun()
 
     if c2.button(
-        "Segment cells in boxes", use_container_width=True, key=f"{key_ns}_predict"
+        "Segment cells in boxes",
+        use_container_width=True,
+        key=f"{key_ns}_predict",
+        help="Remember to click complete first!",
     ):
         new_masks = segment_with_sam2(rec)
         for mask in new_masks:

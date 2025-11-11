@@ -185,6 +185,44 @@ def prep_image_for_sam2(img: np.ndarray) -> np.ndarray:
     return a
 
 
+from huggingface_hub import hf_hub_download
+
+# adjust these to taste (tiny/base_plus also available)
+_HF_REPO = "facebook/sam2.1-hiera-large"
+_HF_CKPT = "sam2.1_hiera_large.pt"
+_HF_CFG = "sam2.1_hiera_l.yaml"
+
+
+@st.cache_resource(show_spinner="Loading SAM2 weights…")
+def _load_sam2():
+    device = (
+        "cuda"
+        if torch.cuda.is_available()
+        else ("mps" if torch.backends.mps.is_available() else "cpu")
+    )
+
+    # --- minimal additions start ---
+    from huggingface_hub import hf_hub_download
+
+    # use package config string (resolved by the installed sam2 package)
+    cfg.CFG_PATH = "configs/sam2.1/sam2.1_hiera_l.yaml"
+    # download checkpoint to local HF cache and use its path
+    cfg.CKPT_PATH = hf_hub_download(
+        repo_id="facebook/sam2.1-hiera-large",
+        filename="sam2.1_hiera_large.pt",
+    )
+    # --- minimal additions end ---
+
+    sam = build_sam2(
+        cfg.CFG_PATH,
+        cfg.CKPT_PATH,
+        device=device,
+        apply_postprocessing=False,  # post-processing not supported with MPS :(
+    )
+    predictor = SAM2ImagePredictor(sam)
+    return predictor, device
+
+
 def segment_with_sam2(cur: dict):
     """input is record for prediction. boxes to guide prediction will be extracted wtih "boxes" key.
     Return a list of (H,W) boolean masks (best mask per box."""
@@ -202,18 +240,7 @@ def segment_with_sam2(cur: dict):
         st.info("All boxes were empty.")
         return []
 
-    device = (
-        "cuda"
-        if torch.cuda.is_available()
-        else ("mps" if torch.backends.mps.is_available() else "cpu")
-    )
-    sam = build_sam2(
-        cfg.CFG_PATH,
-        cfg.CKPT_PATH,
-        device=device,
-        apply_postprocessing=False,  # post-processing not supported with MPS :(
-    )
-    predictor = SAM2ImagePredictor(sam)
+    predictor, device = _load_sam2()
 
     img_float = prep_image_for_sam2(cur["image"])
     amp = (

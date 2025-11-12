@@ -15,7 +15,7 @@ from helpers.state_ops import ensure_global_state
 ensure_global_state()
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 configure_tf_cpu_only()
-# common_boot()
+common_boot()
 
 # hide Streamlit's sidebar nav (since Hydralit provides top nav)
 st.markdown(

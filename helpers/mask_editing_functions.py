@@ -19,6 +19,7 @@ import hashlib
 from PIL import Image
 from streamlit_image_annotation import detection
 import tempfile
+from huggingface_hub import hf_hub_download
 
 # -----------------------------------------------------#
 # --------------- MASK HELPERS SIDEBAR --------------- #
@@ -185,14 +186,6 @@ def prep_image_for_sam2(img: np.ndarray) -> np.ndarray:
     return a
 
 
-from huggingface_hub import hf_hub_download
-
-# adjust these to taste (tiny/base_plus also available)
-_HF_REPO = "facebook/sam2.1-hiera-large"
-_HF_CKPT = "sam2.1_hiera_large.pt"
-_HF_CFG = "sam2.1_hiera_l.yaml"
-
-
 @st.cache_resource(show_spinner="Loading SAM2 weights…")
 def _load_sam2():
     device = (
@@ -200,9 +193,6 @@ def _load_sam2():
         if torch.cuda.is_available()
         else ("mps" if torch.backends.mps.is_available() else "cpu")
     )
-
-    # --- minimal additions start ---
-    from huggingface_hub import hf_hub_download
 
     # use package config string (resolved by the installed sam2 package)
     cfg.CFG_PATH = "configs/sam2.1/sam2.1_hiera_l.yaml"
@@ -303,6 +293,84 @@ def polygon_to_mask(obj, h, w):
     if pts:
         draw.polygon(pts, outline=1, fill=1)
     return np.array(mask_img, dtype=np.uint8)
+
+
+def remove_clicked():
+    if not st.session_state["remove_click"]:
+        return
+
+    rec = get_current_rec()
+    disp_w = st.session_state["disp_w"]
+
+    s = float(disp_w / rec["W"])
+    xy = (
+        int(round(st.session_state["remove_click"]["x"] / s)),
+        int(round(st.session_state["remove_click"]["y"] / s)),
+    )
+
+    # ignore if it's the same click we already handled
+    if xy == st.session_state["last_remove_xy"]:
+        return
+
+    st.session_state["last_remove_xy"] = xy
+
+    x, y = xy
+    m = rec.get("masks")
+
+    iid = int(m[y, x])
+    if iid == 0:
+        return
+
+    m = m.copy()
+    m[m == iid] = 0
+    gt = m > iid
+    if gt.any():
+        m[gt] -= 1
+
+    rec["masks"] = m
+    rec["labels"] = {
+        (k - 1 if k > iid else k): v
+        for k, v in rec.get("labels", {}).items()
+        if k != iid
+    }
+    st.session_state["remove_click"] = False  # prevent reprocessing on rerun
+    st.rerun()
+
+
+def assign_clicked():
+    if not st.session_state["class_click"]:
+        return
+
+    rec = get_current_rec()
+    disp_w = st.session_state["disp_w"]
+    s = float(disp_w / rec["W"])
+    xy = (
+        int(round(st.session_state["class_click"]["x"] / s)),
+        int(round(st.session_state["class_click"]["y"] / s)),
+    )
+
+    # ignore if it's the same click we already handled
+    if xy == st.session_state["last_class_xy"]:
+        return
+
+    st.session_state["last_class_xy"] = xy
+
+    x, y = xy
+    m = rec.get("masks")
+
+    iid = int(m[y, x])
+    if iid == 0:
+        return
+
+    cur = st.session_state.get("side_current_class")
+    labels = rec.setdefault("labels", {})
+    if cur == "No label" or cur is None:
+        labels.pop(iid, None)
+    else:
+        labels[iid] = cur
+
+    st.session_state["class_click"] = False  # prevent reprocessing on rerun
+    st.rerun()
 
 
 # -----------------------------------------------------#
@@ -605,6 +673,7 @@ def render_display_and_interact_fragment(key_ns="edit", scale=1.5):
         base_img, display_for_ui, disp_w, disp_h = create_image_display(
             rec_for_disp, scale
         )
+        st.session_state["disp_w"] = disp_w
         mode = st.session_state.get("interaction_mode", "Draw box")
 
         M = rec.get("masks")
@@ -715,71 +784,20 @@ def render_display_and_interact_fragment(key_ns="edit", scale=1.5):
 
         # click a mask in the image to remove the mask
         elif mode == "Remove mask":
-            click = streamlit_image_coordinates(
-                display_for_ui, key=f"{key_ns}_rm", width=disp_w
+
+            streamlit_image_coordinates(
+                base_img, key="remove_click", width=disp_w, on_click=remove_clicked
             )
-            if click:
-                x = int(round(int(click["x"]) / scale))
-                y = int(round(int(click["y"]) / scale))
-                if (
-                    0 <= x < rec["W"]
-                    and 0 <= y < rec["H"]
-                    and (x, y) != rec.get("last_click_xy")
-                ):
-                    inst = rec.get("masks")
-                    if isinstance(inst, np.ndarray) and inst.ndim == 2 and inst.size:
-                        iid = int(inst[y, x])
-                        if iid > 0:
-                            inst = inst.copy()
-                            inst[inst == iid] = 0
-                            vals, inv = np.unique(inst, return_inverse=True)
-                            if vals.size > 1:
-                                new_vals = np.zeros_like(vals)
-                                nz = vals != 0
-                                new_vals[nz] = np.arange(
-                                    1, nz.sum() + 1, dtype=inst.dtype
-                                )
-                                inst = new_vals[inv].reshape(inst.shape)
-                                old_labels = rec.setdefault("labels", {})
-                                remap = {
-                                    int(old): int(new)
-                                    for old, new in zip(vals, new_vals)
-                                    if old != 0 and new != 0
-                                }
-                                rec["labels"] = {
-                                    remap[oid]: old_labels.get(oid) for oid in remap
-                                }
-                            else:
-                                rec["labels"] = {}
-                            rec["masks"] = inst
-                            rec["last_click_xy"] = (x, y)
-                            st.rerun()
 
         # click on a mask in the image to assign it the current class
         elif mode == "Assign class":
-            click = streamlit_image_coordinates(
-                display_for_ui, key=f"{key_ns}_class_click", width=disp_w
+
+            streamlit_image_coordinates(
+                base_img,
+                key="class_click",
+                width=disp_w,
+                on_click=assign_clicked,
             )
-            if click and has_instances:
-                x0 = int(round(int(click["x"]) / scale))
-                y0 = int(round(int(click["y"]) / scale))
-                if (
-                    0 <= x0 < rec["W"]
-                    and 0 <= y0 < rec["H"]
-                    and (x0, y0) != rec.get("last_click_xy")
-                ):
-                    iid = int(M[y0, x0])
-                    if iid > 0:
-                        cur_class = st.session_state.get("side_current_class")
-                        if cur_class == "No label":
-                            rec.setdefault("labels", {}).pop(iid, None)
-                        else:
-                            rec.setdefault("labels", {})[iid] = cur_class
-                        rec["last_click_xy"] = (x0, y0)
-                        st.session_state["edit_canvas_nonce"] += 1
-                        st.rerun()
-                    else:
-                        rec["last_click_xy"] = (x0, y0)
 
     with c3:
         st.markdown(

@@ -2,7 +2,5 @@ from boot import common_boot
 from panels import upload_panel
 import streamlit as st
 
-common_boot()
-
 # Main area
 upload_panel.render_main()

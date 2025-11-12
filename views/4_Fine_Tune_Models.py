@@ -2,8 +2,6 @@ import streamlit as st
 from boot import common_boot
 from panels import fine_tune_panel
 
-common_boot()
-
 col1, col2 = st.columns([1, 1])
 
 cellpose_tab, densenet_tab = st.tabs(

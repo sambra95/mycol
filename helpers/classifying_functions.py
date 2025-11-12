@@ -239,7 +239,7 @@ def add_label_from_input(labels, new_label_ss):
 
 
 # -----------------------------------------------------#
-# ------------- CLASSIFY SIDEBA ACTIONS -------------- #
+# ------------- CLASSIFY SIDEBAR ACTIONS -------------- #
 # -----------------------------------------------------#
 
 
@@ -318,7 +318,6 @@ def class_selection_fragment():
         st.rerun()
 
 
-@st.fragment
 def class_manage_fragment(key_ns="side"):
     ss = st.session_state
     labels = ss.setdefault("all_classes", ["No label"])

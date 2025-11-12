@@ -118,6 +118,7 @@ def get_cellpose_weights() -> str | None:
 
 
 # --- cache the loaded Cellpose model so we don't reload every call ---
+@st.cache_resource(show_spinner="Loading Cellpose weights…")
 def get_cellpose_model():
     ss = st.session_state
     # tag tracks which bytes are loaded

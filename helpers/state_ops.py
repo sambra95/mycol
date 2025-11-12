@@ -22,6 +22,11 @@ def ensure_global_state() -> None:
     ss.setdefault("interaction_mode", "Remove mask")
     ss.setdefault("side_interaction_mode", "Draw box")
     ss.setdefault("skipped_files", [])
+    ss.setdefault("remove_click", False)
+    ss.setdefault("class_click", False)
+    st.session_state.setdefault("last_class_xy", None)
+    st.session_state.setdefault("last_remove_xy", None)
+    ss.setdefault("disp_w", 0)
 
     # cellpose model training defaults
     ss.setdefault("cyto_to_train", "Cyto3")

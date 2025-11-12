@@ -32,5 +32,5 @@ streamlit-drawable-canvas==0.9.3
 streamlit-image-coordinates==0.1.9   # last pre-2025 release, works with 1.40
 streamlit_image_annotation
 
-git+https://github.com/facebookresearch/sam2.git
+#git+https://github.com/facebookresearch/sam2.git may be removed
 huggingface_hub

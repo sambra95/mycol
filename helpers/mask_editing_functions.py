@@ -24,6 +24,22 @@ Box = dict[str, float]
 # -----------------------------------------------------#
 
 
+def create_image_mask_overlay_inner(
+    image_bytes,
+    mask_bytes,
+    image_shape,
+    mask_shape,
+    classes_items,
+    palette_items,
+    alpha,
+):
+    image = np.frombuffer(image_bytes, dtype=np.uint8).reshape(image_shape)
+    mask = np.frombuffer(mask_bytes, dtype=np.uint16).reshape(mask_shape)
+    classes_map = dict(classes_items)
+    palette = dict(palette_items)
+    return create_image_mask_overlay(image, mask, classes_map, palette, alpha)
+
+
 def create_image_mask_overlay(image, mask, classes_map, palette, alpha=0.5):
     """
     image_u8:  uint8 RGB image, shape (H, W, 3)
@@ -75,20 +91,40 @@ def create_image_mask_overlay(image, mask, classes_map, palette, alpha=0.5):
     return (np.clip(out, 0, 1) * 255).astype(np.uint8)
 
 
+@st.cache_data(show_spinner=False)
+def cached_image_mask_overlay(
+    image: np.ndarray,
+    mask: np.ndarray,
+    classes_map: dict,
+    palette: dict,
+    alpha: float,
+) -> np.ndarray:
+    # Convert unhashable types to something cacheable
+    image_key = image.tobytes()
+    mask_key = mask.tobytes()
+    classes_key = tuple(sorted(classes_map.items()))
+    palette_key = tuple(sorted(palette.items()))
+
+    return create_image_mask_overlay_inner(
+        image_key, mask_key, image.shape, mask.shape, classes_key, palette_key, alpha
+    )
+
+
 def create_image_display(rec, scale):
     disp_w, disp_h = int(rec["W"] * scale), int(rec["H"] * scale)
 
     mask = rec.get("masks")
 
-    if st.session_state.get("show_overlay", False) and mask.any():
+    if st.session_state.get("show_overlay", False) and mask is not None and mask.any():
         labels = st.session_state.setdefault("all_classes", ["No label"])
         palette = create_colour_palette(labels)
         classes_map = classes_map_from_labels(rec["masks"], rec["labels"])
-        base_img = create_image_mask_overlay(
+
+        base_img = cached_image_mask_overlay(
             rec["image"], rec["masks"], classes_map, palette, alpha=0.35
         )
     else:
-        base_img = rec["image"]  # need unaltered image to draw boxes on
+        base_img = rec["image"]
 
     display_for_ui = np.array(
         Image.fromarray(base_img.astype(np.uint8)).resize(

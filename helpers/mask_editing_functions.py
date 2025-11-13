@@ -1,27 +1,300 @@
-import numpy as np
-from PIL import Image, ImageDraw
-import streamlit as st
-import torch
-from sam2.build_sam import build_sam2
-from sam2.sam2_image_predictor import SAM2ImagePredictor
-from contextlib import nullcontext
-from typing import Dict, Any
-from scipy import ndimage as ndi
-from streamlit_drawable_canvas import st_canvas
-from streamlit_image_coordinates import streamlit_image_coordinates
+"""Segmentation and interactive mask editing for the Streamlit app."""
 
-from helpers.state_ops import ordered_keys, get_current_rec
-from helpers.classifying_functions import classes_map_from_labels, create_colour_palette
-from helpers.cellpose_functions import segment_with_cellpose, normalize_image
-import os
 import hashlib
-from PIL import Image
-from streamlit_image_annotation import detection
-import tempfile
-from huggingface_hub import hf_hub_download
+from streamlit_image_coordinates import streamlit_image_coordinates
+import numpy as np
+import plotly.graph_objects as go
+import streamlit as st
+from PIL import Image, ImageDraw
+from scipy import ndimage as ndi
+
+from helpers.state_ops import ordered_keys, get_current_rec, set_current_by_index
+from helpers.classifying_functions import classes_map_from_labels, create_colour_palette
+from helpers.cellpose_functions import normalize_image
+from helpers.sam2_functions import segment_with_sam2, _clear_boxes, box_draw_fragment
+
+ImageArray = np.ndarray  # (H, W, 3) uint8/float32
+MaskArray = np.ndarray  # (H, W) int / bool
+Record = dict[str, any]
+Box = dict[str, float]
+
 
 # -----------------------------------------------------#
-# --------------- MASK HELPERS SIDEBAR --------------- #
+# --------------- IMAGE HELPERS  --------------- #
+# -----------------------------------------------------#
+
+
+def create_image_mask_overlay_inner(
+    image_bytes,
+    mask_bytes,
+    image_shape,
+    mask_shape,
+    classes_items,
+    palette_items,
+    alpha,
+):
+    image = np.frombuffer(image_bytes, dtype=np.uint8).reshape(image_shape)
+    mask = np.frombuffer(mask_bytes, dtype=np.uint16).reshape(mask_shape)
+    classes_map = dict(classes_items)
+    palette = dict(palette_items)
+    return create_image_mask_overlay(image, mask, classes_map, palette, alpha)
+
+
+def create_image_mask_overlay(image, mask, classes_map, palette, alpha=0.5):
+    """
+    image_u8:  uint8 RGB image, shape (H, W, 3)
+    mask: uint{8,16,32} label image, shape (H, W), 0=background, 1..N=instances
+    classes_map: dict[int -> class_name]
+    palette: dict[class_name -> (r,g,b) in 0..1]
+    alpha: overlay opacity for filled region
+    """
+    H, W = image.shape[:2]
+    inst = np.asarray(mask)
+
+    if inst.ndim != 2:
+        raise ValueError("label_inst must be a 2D label image (H, W)")
+    if inst.shape != (H, W):
+        # nearest to preserve integer labels
+        inst = np.array(
+            Image.fromarray(inst).resize((W, H), Image.NEAREST), dtype=inst.dtype
+        )
+
+    if inst.size == 0 or not np.any(inst):
+        return image
+
+    out = image.astype(np.float32) / 255.0
+
+    ids = np.unique(inst)
+    ids = ids[ids != 0]  # skip background
+
+    for iid in ids:
+        cls = classes_map.get(int(iid), "__unlabeled__")
+        color = np.array(palette.get(cls, palette["__unlabeled__"]), dtype=np.float32)
+
+        mm = inst == iid
+
+        # fill
+        a = (mm.astype(np.float32) * alpha)[..., None]
+        out = out * (1 - a) + color[None, None, :] * a
+
+        # 1px white edge (simple interior test)
+        interior = (
+            mm
+            & np.roll(mm, 1, 0)
+            & np.roll(mm, -1, 0)
+            & np.roll(mm, 1, 1)
+            & np.roll(mm, -1, 1)
+        )
+        edge = mm & ~interior
+        out[edge] = 1.0
+
+    return (np.clip(out, 0, 1) * 255).astype(np.uint8)
+
+
+@st.cache_data(show_spinner=False)
+def cached_image_mask_overlay(
+    image: np.ndarray,
+    mask: np.ndarray,
+    classes_map: dict,
+    palette: dict,
+    alpha: float,
+) -> np.ndarray:
+    # Convert unhashable types to something cacheable
+    image_key = image.tobytes()
+    mask_key = mask.tobytes()
+    classes_key = tuple(sorted(classes_map.items()))
+    palette_key = tuple(sorted(palette.items()))
+
+    return create_image_mask_overlay_inner(
+        image_key, mask_key, image.shape, mask.shape, classes_key, palette_key, alpha
+    )
+
+
+def create_image_display(rec, scale):
+    disp_w, disp_h = int(rec["W"] * scale), int(rec["H"] * scale)
+
+    mask = rec.get("masks")
+
+    if st.session_state.get("show_overlay", False) and mask is not None and mask.any():
+        labels = st.session_state.setdefault("all_classes", ["No label"])
+        palette = create_colour_palette(labels)
+        classes_map = classes_map_from_labels(rec["masks"], rec["labels"])
+
+        base_img = cached_image_mask_overlay(
+            rec["image"], rec["masks"], classes_map, palette, alpha=0.35
+        )
+    else:
+        base_img = rec["image"]
+
+    display_for_ui = np.array(
+        Image.fromarray(base_img.astype(np.uint8)).resize(
+            (disp_w, disp_h), Image.BILINEAR
+        )
+    )
+    return base_img, display_for_ui, disp_w, disp_h
+
+
+def _make_base_figure(bg_img, disp_w: int, disp_h: int, dragmode: str) -> go.Figure:
+    """
+    Create a Plotly figure with a background image and fixed pixel size.
+    Used by both 'Draw box' and 'Draw mask' modes.
+    """
+    fig = go.Figure()
+
+    fig.add_layout_image(
+        dict(
+            source=bg_img,
+            xref="x",
+            yref="y",
+            x=0,
+            y=disp_h,
+            sizex=disp_w,
+            sizey=disp_h,
+            sizing="stretch",
+            layer="below",
+        )
+    )
+
+    fig.update_xaxes(visible=False, range=[0, disp_w], constrain="domain")
+    fig.update_yaxes(
+        visible=False,
+        range=[0, disp_h],
+        scaleanchor="x",
+        scaleratio=1,
+    )
+
+    fig.update_layout(
+        dragmode=dragmode,
+        margin=dict(l=0, r=0, t=0, b=0),
+        width=disp_w,
+        height=disp_h,
+    )
+
+    return fig
+
+
+def _handle_draw_mask_mode(
+    rec: Record,
+    display_for_ui: ImageArray,
+    disp_w: int,
+    disp_h: int,
+    key_ns: str,
+) -> None:
+    """Handle interactions when in 'Draw mask' mode."""
+    bg = Image.fromarray(display_for_ui).convert("RGBA")
+
+    # Track display shape per record so we can clear any stale display-space data
+    disp_shape = (disp_h, disp_w)
+    if rec.get("display_shape") != disp_shape:
+        rec["display_shape"] = disp_shape
+        # reset any display-space storage tied to the old size
+        st.session_state["boxes"] = []
+
+    # unique key per image so Streamlit doesn't reuse chart state incorrectly
+    img_hash = hashlib.md5(bg.tobytes()).hexdigest()[:8]
+    chart_key = f"{key_ns}_plotly_mask_{img_hash}"
+
+    if "boxes" not in st.session_state:
+        st.session_state["boxes"] = []  # if you still want raw polys
+
+    def update_boxes() -> None:
+        event = st.session_state.get(chart_key)
+        if event is None or event.selection is None:
+            return
+
+        if getattr(event.selection, "lasso", None):
+            for l in event.selection.lasso:
+                xs_plot = l["x"]
+                ys_plot = l["y"]
+
+                # (optional) keep polygons for debugging / later use
+                clean_poly = {"x": xs_plot, "y": ys_plot}
+                if clean_poly not in st.session_state["boxes"]:
+                    st.session_state["boxes"].append(clean_poly)
+
+                # Plotly coords (0 at bottom) -> display coords (0 at top)
+                xs_disp = xs_plot
+                ys_disp = [disp_h - y for y in ys_plot]
+
+                # 1) polygon (display space) -> mask in display resolution
+                mask_disp = polygon_xy_to_mask(xs_disp, ys_disp, disp_h, disp_w)
+
+                # 2) resize to ORIGINAL image resolution
+                mask_full = np.array(
+                    Image.fromarray(mask_disp.astype(np.uint8)).resize(
+                        (rec["W"], rec["H"]), Image.NEAREST
+                    ),
+                    dtype=bool,
+                )
+
+                # 3) integrate into rec["masks"]
+                inst, new_id = integrate_new_mask(rec["masks"], mask_full)
+                if new_id is not None:
+                    rec["masks"] = inst
+                    rec.setdefault("labels", {})[int(new_id)] = rec["labels"].get(
+                        int(new_id), None
+                    )
+
+    # Build figure using the shared helper: same size as box mode
+    fig = _make_base_figure(bg, disp_w, disp_h, dragmode="lasso")
+
+    st.plotly_chart(
+        fig,
+        key=chart_key,
+        on_select=update_boxes,
+        selection_mode="lasso",
+        use_container_width=False,  # same behaviour as box mode
+        config={
+            "scrollZoom": True,
+            "displaylogo": False,
+            "modeBarButtonsToAdd": ["lasso2d", "select2d", "zoom2d", "pan2d"],
+        },
+    )
+
+
+def _handle_draw_box_mode(
+    rec: Record,
+    display_for_ui: ImageArray,
+    disp_w: int,
+    disp_h: int,
+    key_ns: str,
+) -> None:
+    """Handle interactions when in 'Draw box' mode."""
+    bg = Image.fromarray(display_for_ui).convert("RGBA")
+    img_hash = hashlib.md5(bg.tobytes()).hexdigest()[:8]
+    chart_key = f"{key_ns}_plotly_{img_hash}"
+
+    box_draw_fragment(
+        bg_img=bg,
+        disp_w=disp_w,
+        disp_h=disp_h,
+        chart_key=chart_key,
+        rec=rec,
+    )
+
+
+def _handle_remove_mask_mode(base_img: ImageArray, disp_w: int) -> None:
+    """Handle interactions when in 'Remove mask' mode."""
+    streamlit_image_coordinates(
+        base_img,
+        key="remove_click",
+        width=disp_w,
+        on_click=remove_clicked,
+    )
+
+
+def _handle_assign_class_mode(base_img: ImageArray, disp_w: int) -> None:
+    """Handle interactions when in 'Assign class' mode."""
+    streamlit_image_coordinates(
+        base_img,
+        key="class_click",
+        width=disp_w,
+        on_click=assign_clicked,
+    )
+
+
+# -----------------------------------------------------#
+# --------------- MASK HELPERS  --------------- #
 # -----------------------------------------------------#
 
 
@@ -79,219 +352,12 @@ def integrate_new_mask(original: np.ndarray, new_binary: np.ndarray):
     return out, new_id
 
 
-# -----------------------------------------------------#
-# ---------- SEGMENTATION SIDEBAR (CELLPOSE) --------- #
-# -----------------------------------------------------#
-
-
-def segment_current_and_refresh():
-    """calls cellpose to segment the current image"""
-    rec = get_current_rec()
-    if rec is not None:
-        params = get_cellpose_hparams_from_state()
-        segment_with_cellpose(rec, **params)
-        st.session_state["edit_canvas_nonce"] += 1
-    st.rerun()
-
-
-def batch_segment_and_refresh():
-    """calls cellpose to segment all images with progress bar"""
-    ok = ordered_keys()
-    params = get_cellpose_hparams_from_state()
-    n = len(ok)
-    pb = st.progress(0.0, text="Starting…")
-    for i, k in enumerate(ok, 1):
-        segment_with_cellpose(st.session_state.images.get(k), **params)
-        pb.progress(i / n, text=f"Segmented {i}/{n}")
-    pb.empty()
-    st.session_state["edit_canvas_nonce"] += 1
-    st.rerun()
-
-
-def get_cellpose_hparams_from_state():
-    """calls hparam values from session state"""
-    # Build kwargs matching segment_rec_with_cellpose signature
-    ch1 = int(st.session_state.get("cp_ch1"))
-    ch2 = int(st.session_state.get("cp_ch2"))
-    diameter = st.session_state.get("cp_diameter")
-    # ensure None if 0.0 when Auto
-    if st.session_state.get("cp_diam_mode", "Auto (None)") == "Auto (None)":
-        diameter = None
-
-    return dict(
-        channels=(ch1, ch2),
-        diameter=diameter,
-        cellprob_threshold=float(st.session_state.get("cp_cellprob_threshold")),
-        flow_threshold=float(st.session_state.get("cp_flow_threshold")),
-        min_size=int(st.session_state.get("cp_min_size")),
-        niter=int(st.session_state.get("cp_niter")),
-    )
-
-
-# ============================================================
-# --------- SEGMENTATION SIDEBAR (BOXES AND SAM2) ------------
-# ============================================================
-
-
-def render_sam2_boxes(boxes, scale=1.0) -> Dict[str, Any]:
-    """draw box for sam2 mask predictions on canvas rendering"""
-    rects = []
-    for x0, y0, x1, y1 in boxes:
-        rects.append(
-            {
-                "type": "rect",
-                "left": x0 * scale,
-                "top": y0 * scale,
-                "width": (x1 - x0) * scale,
-                "height": (y1 - y0) * scale,
-                "fill": "rgba(0, 0, 255, 0.25)",
-                "stroke": "white",
-                "strokeWidth": 2,
-                "selectable": False,
-                "evented": False,
-                "hasControls": False,
-                "lockMovementX": True,
-                "lockMovementY": True,
-                "hoverCursor": "crosshair",
-            }
-        )
-    return {"objects": rects}
-
-
-def draw_boxes_overlay(image_u8, boxes, alpha=0.25, outline_px=2):
-    """overlay drawn boxes the image"""
-    base = Image.fromarray(image_u8).convert("RGBA")
-    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(overlay)
-    fill = (0, 0, 255, int(alpha * 255))
-    for x0, y0, x1, y1 in boxes:
-        d.rectangle(
-            [x0, y0, x1, y1], fill=fill, outline=(255, 255, 255, 255), width=outline_px
-        )
-    return np.array(Image.alpha_composite(base, overlay).convert("RGB"), dtype=np.uint8)
-
-
-def prep_image_for_sam2(img: np.ndarray) -> np.ndarray:
-    """preprocess image into correct format for mask prediction with sam2"""
-    a = img
-    if a.ndim == 2:
-        a = np.repeat(a[..., None], 3, axis=2)
-    elif a.ndim == 3 and a.shape[2] == 4:
-        a = np.array(Image.fromarray(a).convert("RGB"))
-    a = a.astype(np.float32)
-    mx = a.max() if a.size else 1.0
-    if mx > 1.0:
-        a /= 255.0 if mx <= 255 else (65535.0 if mx <= 65535 else mx)
-    return a
-
-
-@st.cache_resource(show_spinner="Loading SAM2 weights…")
-def _load_sam2():
-    device = (
-        "cuda"
-        if torch.cuda.is_available()
-        else ("mps" if torch.backends.mps.is_available() else "cpu")
-    )
-
-    # use package config string (resolved by the installed sam2 package)
-    CFG_PATH = "configs/sam2.1/sam2.1_hiera_l.yaml"
-    # download checkpoint to local HF cache and use its path
-    CKPT_PATH = hf_hub_download(
-        repo_id="facebook/sam2.1-hiera-large",
-        filename="sam2.1_hiera_large.pt",
-    )
-    # --- minimal additions end ---
-
-    sam = build_sam2(
-        CFG_PATH,
-        CKPT_PATH,
-        device=device,
-        apply_postprocessing=False,  # post-processing not supported with MPS :(
-    )
-    predictor = SAM2ImagePredictor(sam)
-    return predictor, device
-
-
-def segment_with_sam2(cur: dict):
-    """input is record for prediction. boxes to guide prediction will be extracted wtih "boxes" key.
-    Return a list of (H,W) boolean masks (best mask per box."""
-    boxes = np.asarray(cur.get("boxes", []), dtype=np.float32)
-    if boxes.size == 0:
-        st.info("No boxes drawn yet.")
-        return []
-    if boxes.ndim == 1:
-        boxes = boxes[None, :]  # (1,4)
-
-    # drop degenerate
-    w, h = boxes[:, 2] - boxes[:, 0], boxes[:, 3] - boxes[:, 1]
-    boxes = boxes[(w > 0) & (h > 0)]
-    if boxes.size == 0:
-        st.info("All boxes were empty.")
-        return []
-
-    predictor, device = _load_sam2()
-
-    img_float = prep_image_for_sam2(cur["image"])
-    amp = (
-        torch.autocast("cuda", dtype=torch.bfloat16)
-        if device == "cuda"
-        else nullcontext()
-    )
-    with torch.inference_mode(), amp:
-        predictor.set_image(img_float)
-        masks, scores, _ = predictor.predict(
-            point_coords=None, point_labels=None, box=boxes, multimask_output=True
-        )
-
-    # to numpy
-    if isinstance(masks, torch.Tensor):
-        masks = masks.detach().cpu().numpy()
-    if isinstance(scores, torch.Tensor):
-        scores = scores.detach().cpu().numpy()
-
-    # normalize shapes:
-    if masks.ndim == 3:
-        masks = masks[None, ...]
-    if scores.ndim == 1:
-        scores = scores[None, ...]
-
-    B = scores.shape[0]
-    best = scores.argmax(-1)  # (B,)
-    masks_best = masks[np.arange(B), best]  # (B,H,W)
-
-    H, W = int(cur["H"]), int(cur["W"])
-    out = []
-    for mi in masks_best:
-        mi = mi > 0
-        if mi.shape != (H, W):
-            mi = np.array(
-                Image.fromarray(mi.astype(np.uint8)).resize((W, H), Image.NEAREST),
-                dtype=bool,
-            )
-        out.append(mi)
-    return out  # list of boalean mask (best mask for each box)
-
-
-# ============================================================
-# ----------- MANUAL MASK EDITING SIDEBAR --------------------
-# ============================================================
-
-
-def polygon_to_mask(obj, h, w):
-    """drawing function for adding masks by freehand drawing on rendered canvas"""
-    mask_img = Image.new("L", (w, h), 0)
-    draw = ImageDraw.Draw(mask_img)
-    pts = []
-    for cmd in obj.get("path", []):
-        if (
-            len(cmd) >= 3
-            and isinstance(cmd[1], (int, float))
-            and isinstance(cmd[2], (int, float))
-        ):
-            pts.append((cmd[1], cmd[2]))
-    if pts:
-        draw.polygon(pts, outline=1, fill=1)
-    return np.array(mask_img, dtype=np.uint8)
+def polygon_xy_to_mask(xs, ys, height, width):
+    """Rasterize a polygon given x,y coords into a (height,width) bool mask."""
+    img = Image.new("L", (width, height), 0)
+    xy = list(zip(xs, ys))
+    ImageDraw.Draw(img).polygon(xy, outline=1, fill=1)
+    return np.array(img, dtype=bool)
 
 
 def remove_clicked():
@@ -333,7 +399,6 @@ def remove_clicked():
         if k != iid
     }
     st.session_state["remove_click"] = False  # prevent reprocessing on rerun
-    st.rerun()
 
 
 def assign_clicked():
@@ -369,19 +434,11 @@ def assign_clicked():
         labels[iid] = cur
 
     st.session_state["class_click"] = False  # prevent reprocessing on rerun
-    st.rerun()
 
 
 # -----------------------------------------------------#
 # ------------------ RENDER SIDE BAR ----------------- #
 # -----------------------------------------------------#
-
-
-def set_current_by_index(idx: int):
-    ok = ordered_keys()
-    if not ok:
-        return
-    st.session_state.current_key = ok[idx % len(ok)]
 
 
 @st.fragment
@@ -473,18 +530,17 @@ def render_cellpose_hyperparameters_fragment():
 
 def render_box_tools_fragment(key_ns="side"):
     rec = get_current_rec()
-    row = st.container()
+    c1, c2 = st.columns([1, 1])
 
-    st.info("Draw boxes, click 'Complete' then click 'Segment'")
-
-    c1, c2 = row.columns([1, 1])
-
-    if c1.button("Draw box mode", use_container_width=True, key=f"{key_ns}_draw_boxes"):
+    if c1.button("Draw box", use_container_width=True, key=f"{key_ns}_draw_boxes"):
         st.session_state["interaction_mode"] = "Draw box"
         st.rerun()
 
-    if c2.button(
-        "Segment",
+    if c2.button("Clear boxes", use_container_width=True, key="clear_boxes_button"):
+        _clear_boxes(rec)
+
+    if st.button(
+        "Generate masks from boxes",
         use_container_width=True,
         key=f"{key_ns}_predict",
         help="Remember to click complete first!",
@@ -497,7 +553,7 @@ def render_box_tools_fragment(key_ns="side"):
                 rec.setdefault("labels", {})[int(new_id)] = rec["labels"].get(
                     int(new_id), None
                 )
-        rec["boxes"] = []
+
         st.session_state["pred_canvas_nonce"] += 1
         st.session_state["edit_canvas_nonce"] += 1
         st.rerun()
@@ -508,18 +564,33 @@ def render_mask_tools_fragment(key_ns="side"):
     row = st.container()
     c1, c2 = row.columns([1, 1])
 
-    if c1.button("Draw mask", use_container_width=True, key=f"{key_ns}_draw_masks"):
+    if c1.button(
+        "Draw mask",
+        use_container_width=True,
+        key=f"{key_ns}_draw_masks",
+        help="Click and hold to draw masks",
+    ):
         st.session_state["interaction_mode"] = "Draw mask"
         st.rerun()
 
-    if c2.button("Remove mask", use_container_width=True, key=f"{key_ns}_remove_masks"):
+    if c2.button(
+        "Remove mask",
+        use_container_width=True,
+        key=f"{key_ns}_remove_masks",
+        help="Click masks to remove them",
+    ):
         st.session_state["interaction_mode"] = "Remove mask"
         st.rerun()
 
     row = st.container()
     c1, c2 = row.columns([1, 1])
 
-    if c1.button("Clear masks", use_container_width=True, key=f"{key_ns}_clear_masks"):
+    if c1.button(
+        "Clear masks",
+        use_container_width=True,
+        key=f"{key_ns}_clear_masks",
+        help="Remove all masks from image",
+    ):
         rec["masks"] = np.zeros((rec["H"], rec["W"]), dtype=np.uint16)
         rec["labels"] = {}
         rec["last_click_xy"] = None
@@ -543,116 +614,6 @@ def render_mask_tools_fragment(key_ns="side"):
 # -----------------------------------------------------#
 
 
-def create_image_mask_overlay(image, mask, classes_map, palette, alpha=0.5):
-    """
-    image_u8:  uint8 RGB image, shape (H, W, 3)
-    mask: uint{8,16,32} label image, shape (H, W), 0=background, 1..N=instances
-    classes_map: dict[int -> class_name]
-    palette: dict[class_name -> (r,g,b) in 0..1]
-    alpha: overlay opacity for filled region
-    """
-    H, W = image.shape[:2]
-    inst = np.asarray(mask)
-
-    if inst.ndim != 2:
-        raise ValueError("label_inst must be a 2D label image (H, W)")
-    if inst.shape != (H, W):
-        # nearest to preserve integer labels
-        inst = np.array(
-            Image.fromarray(inst).resize((W, H), Image.NEAREST), dtype=inst.dtype
-        )
-
-    if inst.size == 0 or not np.any(inst):
-        return image
-
-    out = image.astype(np.float32) / 255.0
-
-    ids = np.unique(inst)
-    ids = ids[ids != 0]  # skip background
-
-    for iid in ids:
-        cls = classes_map.get(int(iid), "__unlabeled__")
-        color = np.array(palette.get(cls, palette["__unlabeled__"]), dtype=np.float32)
-
-        mm = inst == iid
-
-        # fill
-        a = (mm.astype(np.float32) * alpha)[..., None]
-        out = out * (1 - a) + color[None, None, :] * a
-
-        # 1px white edge (simple interior test)
-        interior = (
-            mm
-            & np.roll(mm, 1, 0)
-            & np.roll(mm, -1, 0)
-            & np.roll(mm, 1, 1)
-            & np.roll(mm, -1, 1)
-        )
-        edge = mm & ~interior
-        out[edge] = 1.0
-
-    return (np.clip(out, 0, 1) * 255).astype(np.uint8)
-
-
-# --- fast, content-agnostic hashing for big structures ---
-ARRAY_HASH = {np.ndarray: lambda a: (id(a), a.shape, str(a.dtype))}
-DICT_HASH = {dict: lambda d: (id(d), len(d))}  # cheap; relies on reassigning dicts
-
-
-@st.cache_data(hash_funcs={**ARRAY_HASH, **DICT_HASH})
-def _make_base_img(
-    image_arr, masks_arr, labels_dict, show_overlay, all_labels_tuple, alpha
-):
-    """Return either the raw image or an overlay; pure & cacheable."""
-    if (
-        show_overlay
-        and isinstance(masks_arr, np.ndarray)
-        and masks_arr.ndim == 2
-        and masks_arr.any()
-    ):
-        palette = create_colour_palette(
-            list(all_labels_tuple)
-        )  # derived from labels list
-        classes_map = classes_map_from_labels(masks_arr, labels_dict)
-        return create_image_mask_overlay(
-            image_arr, masks_arr, classes_map, palette, alpha
-        )
-    return image_arr
-
-
-@st.cache_data(hash_funcs=ARRAY_HASH)
-def _resize_uint8(image_arr_uint8, disp_w, disp_h):
-    """Resize to display size; returns uint8 np.ndarray."""
-    return np.array(
-        Image.fromarray(image_arr_uint8).resize((disp_w, disp_h), Image.BILINEAR)
-    )
-
-
-def create_image_display(rec, scale):
-    disp_w, disp_h = int(rec["W"] * scale), int(rec["H"] * scale)
-
-    show_overlay = bool(st.session_state.get("show_overlay", False))
-    all_labels = tuple(
-        st.session_state.setdefault("all_classes", ["No label"])
-    )  # tuple for stable hashing
-    alpha = 0.35  # constant used in your original code
-
-    # 1) get base image (raw or overlaid) – cached
-    base_img = _make_base_img(
-        rec["image"],  # np.ndarray (uint8 HxWx3)
-        rec.get("masks"),  # np.ndarray or None
-        rec.get("labels", {}),  # dict {iid: class}
-        show_overlay,
-        all_labels,
-        alpha,
-    )
-
-    # 2) resize for UI – cached
-    display_for_ui = _resize_uint8(base_img.astype(np.uint8), disp_w, disp_h)
-
-    return base_img, display_for_ui, disp_w, disp_h
-
-
 @st.fragment
 def render_display_and_interact_fragment(key_ns="edit", scale=1.5):
     rec = get_current_rec()
@@ -660,44 +621,36 @@ def render_display_and_interact_fragment(key_ns="edit", scale=1.5):
         st.warning("Upload an image in **Upload data** first.")
         return
 
-    # --- header: title + controls (Prev / Next / toggles) ---
     ok = ordered_keys()
     names = [st.session_state.images[k]["name"] for k in ok]
     reck = st.session_state.current_key
     rec_idx = ok.index(reck) if reck in ok else 0
 
-    c1, c2, c3 = st.columns([1, 4, 1])
-    with c1:
-        st.markdown(
-            "<br><br><br>", unsafe_allow_html=True
-        )  # filler to move buttons further down the screen
-        if st.button(
-            "◀",
-            key=f"{key_ns}_prev_main",
-            use_container_width=True,
-        ):
-            set_current_by_index(rec_idx - 1)
-            st.rerun(scope="fragment")
-        st.markdown("<br>", unsafe_allow_html=True)  # filler
+    slider_key = f"{key_ns}_jump"  # define once, reuse
 
+    c1, c2 = st.columns([1, 4])
+    with c1:
         st.toggle("Show masks", key="show_overlay", value=True)
         st.toggle("Normalize image", key="show_normalized", value=False)
+
     with c2:
         st.info(f"**Image {rec_idx+1}/{len(ok)}:** {names[rec_idx]}")
 
+        # Just read the slider
         jump = st.slider(
             "Image index",
-            0,
+            1,
             len(ok),
-            rec_idx + 1,
-            key=f"{key_ns}_jump",
+            key=slider_key,
             label_visibility="collapsed",
         )
+
+        # Slider → change current image
         if (jump - 1) != rec_idx:
             set_current_by_index(jump - 1)
             st.rerun()
 
-        # --- show normalized image if toggled (display only)
+        # ... rest of your code unchanged ...
         rec_for_disp = rec
         if st.session_state.get("show_normalized"):
             im = normalize_image(rec["image"])
@@ -711,136 +664,30 @@ def render_display_and_interact_fragment(key_ns="edit", scale=1.5):
         mode = st.session_state.get("interaction_mode", "Draw box")
 
         M = rec.get("masks")
-        has_instances = isinstance(M, np.ndarray) and M.ndim == 2 and M.any()
 
-        # ---- Draw mask
         if mode == "Draw mask":
-            bg = Image.fromarray(display_for_ui).convert("RGBA")
-            canvas_result = st_canvas(
-                fill_color="rgba(0, 0, 255, 0.30)",
-                stroke_width=2,
-                stroke_color="white",
-                background_color="white",
-                background_image=bg,
-                update_streamlit=True,
-                width=disp_w,
-                height=disp_h,
-                drawing_mode="freedraw",
-                point_display_radius=3,
-                initial_drawing=None,
-                key=f"{key_ns}_canvas_edit_{st.session_state['edit_canvas_nonce']}",
+            _handle_draw_mask_mode(
+                rec=rec,
+                display_for_ui=display_for_ui,
+                disp_w=disp_w,
+                disp_h=disp_h,
+                key_ns=key_ns,
             )
-            if canvas_result.json_data:
-                added_any = False
-                for obj in canvas_result.json_data.get("objects", []):
-                    if obj.get("type") not in ("path", "polygon"):
-                        continue
-                    mask_disp = polygon_to_mask(obj, disp_h, disp_w).astype(np.uint16)
-                    mask_full = (
-                        np.array(
-                            Image.fromarray(mask_disp).resize(
-                                (rec["W"], rec["H"]), Image.NEAREST
-                            ),
-                            dtype=np.uint16,
-                        )
-                        > 0
-                    )
-                    inst, new_id = integrate_new_mask(rec["masks"], mask_full)
-                    if new_id is not None:
-                        rec["masks"] = inst
-                        rec.setdefault("labels", {})[int(new_id)] = rec["labels"].get(
-                            int(new_id), None
-                        )
-                        added_any = True
-                if added_any:
-                    st.session_state["edit_canvas_nonce"] += 1
-                    st.rerun()
-
-        # click and hold to draw boxes on the image
         elif mode == "Draw box":
-
-            # 1) Render image for the UI
-            bg = Image.fromarray(display_for_ui).convert("RGB")
-
-            # --- derive a short, stable hash for THIS image to bust widget/browser state ---
-            img_hash = hashlib.md5(bg.tobytes()).hexdigest()[:8]
-
-            # detection() needs a file path
-            tmp_dir = ".stia_tmp"
-            os.makedirs(tmp_dir, exist_ok=True)
-
-            # --- unique path per image so the browser doesn't reuse the old bitmap ---
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                bg.save(tmp, format="PNG")
-                img_path = tmp.name
-
-            # 2) Let the user draw/edit boxes (temporary only; resets on navigation)
-            # NOTE: Always pass *both* bboxes and labels, even if empty.
-            result = detection(
-                image_path=img_path,
-                label_list=["box"],  # restored "box" label
-                bboxes=[],
-                labels=[],
-                height=disp_h,
-                width=disp_w,
-                line_width=2,
-                # key tied to image hash so the component remounts for each image
-                key=f"{key_ns}_canvas_{img_hash}",
+            _handle_draw_box_mode(
+                rec=rec,
+                display_for_ui=display_for_ui,
+                disp_w=disp_w,
+                disp_h=disp_h,
+                key_ns=key_ns,
             )
-
-            # 3) Convert current boxes back to ORIGINAL image coordinates and expose via rec["boxes"]
-            tmp_boxes = []
-            if result:
-                for item in result:
-                    bbox = item.get("bbox")
-                    if not bbox or len(bbox) != 4:
-                        continue
-
-                    left, top, width, height = map(float, bbox)
-
-                    x0 = int(round(left / scale))
-                    y0 = int(round(top / scale))
-                    x1 = int(round((left + width) / scale))
-                    y1 = int(round((top + height) / scale))
-
-                    x0 = max(0, min(rec["W"] - 1, x0))
-                    x1 = max(0, min(rec["W"], x1))
-                    y0 = max(0, min(rec["H"] - 1, y0))
-                    y1 = max(0, min(rec["H"], y1))
-                    if x1 < x0:
-                        x0, x1 = x1, x0
-                    if y1 < y0:
-                        y0, y1 = y1, y0
-
-                    tmp_boxes.append((x0, y0, x1, y1))
-
-            rec["boxes"] = tmp_boxes
-
-        # click a mask in the image to remove the mask
         elif mode == "Remove mask":
-
-            streamlit_image_coordinates(
-                base_img, key="remove_click", width=disp_w, on_click=remove_clicked
+            _handle_remove_mask_mode(
+                base_img=base_img,
+                disp_w=disp_w,
             )
-
-        # click on a mask in the image to assign it the current class
         elif mode == "Assign class":
-
-            streamlit_image_coordinates(
-                base_img,
-                key="class_click",
-                width=disp_w,
-                on_click=assign_clicked,
+            _handle_assign_class_mode(
+                base_img=base_img,
+                disp_w=disp_w,
             )
-
-    with c3:
-        st.markdown(
-            "<br><br><br>", unsafe_allow_html=True
-        )  # filler to move buttons further down the screen
-        if st.button(
-            "*▶*",
-            key=f"{key_ns}_next_main",
-            use_container_width=True,
-        ):
-            set_current_by_index(rec_idx + 1)
-            st.rerun(scope="fragment")

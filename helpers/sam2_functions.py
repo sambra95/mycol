@@ -4,6 +4,7 @@ import streamlit as st
 import torch
 from PIL import Image
 from huggingface_hub import hf_hub_download
+from scipy import ndimage as ndi
 
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor

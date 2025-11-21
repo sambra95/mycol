@@ -236,6 +236,7 @@ def add_label_from_input(labels, new_label_ss):
         labels.append(new_label)
     st.session_state["side_current_class"] = new_label
     st.session_state["side_new_label"] = ""
+    st.rerun()
 
 
 # -----------------------------------------------------#
@@ -324,7 +325,7 @@ def class_manage_fragment(key_ns="side"):
     if pending_val is not None:
         ss[f"{key_ns}_rename_from"] = pending_val
 
-    st.markdown("### Add and remove classes")
+    st.markdown("### Add or remove classes")
 
     # --- Add new class ---
     st.text_input(

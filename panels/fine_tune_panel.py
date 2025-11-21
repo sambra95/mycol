@@ -3,13 +3,11 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-# from PIL import Image  # (only if your helpers rely on PIL types somewhere)
 import itertools
 from cellpose import models, metrics, core
 import torch
 import io as IO
 
-# ---- app helpers ----
 from helpers.state_ops import ordered_keys
 from helpers.densenet_functions import (
     load_labeled_patches,

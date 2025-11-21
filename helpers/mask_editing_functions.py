@@ -484,6 +484,7 @@ def render_box_tools_fragment(key_ns="side"):
     rec = get_current_rec()
     c1, c2 = st.columns([1, 1])
 
+    # button to set mode to draw boxes on the image
     if c1.button(
         "Draw box",
         use_container_width=True,
@@ -492,7 +493,7 @@ def render_box_tools_fragment(key_ns="side"):
     ):
         st.session_state["interaction_mode"] = "Draw box"
         st.rerun()
-
+    # button to clear all boxes from the current image
     if c2.button(
         "Clear boxes",
         use_container_width=True,
@@ -501,6 +502,7 @@ def render_box_tools_fragment(key_ns="side"):
     ):
         _clear_boxes(rec)
 
+    # button to segment with SAM2 the current boxes
     if st.button(
         "Generate masks from boxes",
         use_container_width=True,
@@ -520,6 +522,7 @@ def render_mask_tools_fragment(key_ns="side"):
     row = st.container()
     c1, c2 = row.columns([1, 1])
 
+    # button to set mode to draw masks on the image
     if c1.button(
         "Draw mask",
         use_container_width=True,
@@ -529,6 +532,7 @@ def render_mask_tools_fragment(key_ns="side"):
         st.session_state["interaction_mode"] = "Draw mask"
         st.rerun()
 
+    # button to set mode to remove masks by clicking on them
     if c2.button(
         "Remove mask",
         use_container_width=True,
@@ -541,6 +545,7 @@ def render_mask_tools_fragment(key_ns="side"):
     row = st.container()
     c1, c2 = row.columns([1, 1])
 
+    # button to clear all masks from the current image
     if c1.button(
         "Clear masks",
         use_container_width=True,
@@ -553,6 +558,7 @@ def render_mask_tools_fragment(key_ns="side"):
         st.session_state["edit_canvas_nonce"] += 1
         st.rerun()
 
+    # button to remove the last added mask
     if c2.button(
         "Undo mask",
         use_container_width=True,
@@ -575,6 +581,8 @@ def render_mask_tools_fragment(key_ns="side"):
 
 @st.fragment
 def render_display_and_interact_fragment(key_ns="edit", scale=1.5):
+
+    # get current record and verify that images are uploaded
     rec = get_current_rec()
     if rec is None:
         st.warning("Upload an image in **Upload data** first.")
@@ -585,6 +593,7 @@ def render_display_and_interact_fragment(key_ns="edit", scale=1.5):
     reck = st.session_state.current_key
     rec_idx = ok.index(reck) if reck in ok else 0
 
+    # toggles for overlay and normalization of display
     c1, c2 = st.columns([1, 4])
     with c1:
         st.toggle("Show masks", key="show_overlay", value=True)
@@ -593,7 +602,7 @@ def render_display_and_interact_fragment(key_ns="edit", scale=1.5):
     with c2:
         st.info(f"**Image {rec_idx+1}/{len(ok)}:** {names[rec_idx]}")
 
-        # Just read the slider
+        # slider to move between images
         jump = st.slider(
             "Image index",
             1,
@@ -602,15 +611,15 @@ def render_display_and_interact_fragment(key_ns="edit", scale=1.5):
             key="slider_jump",
             label_visibility="collapsed",
         )
-
-        # Slider → change current image
         if (jump - 1) != rec_idx:
             set_current_by_index(jump - 1)
             st.rerun()
 
-        # ... rest of your code unchanged ...
+        # display image with masks overlay and interaction
         rec_for_disp = rec
-        if st.session_state.get("show_normalized"):
+        if st.session_state.get(
+            "show_normalized"
+        ):  # normalize background image if selected
             im = normalize_image(rec["image"])
             rec_for_disp = dict(rec)
             rec_for_disp["image"] = im
@@ -619,10 +628,11 @@ def render_display_and_interact_fragment(key_ns="edit", scale=1.5):
             rec_for_disp, scale
         )
         st.session_state["disp_w"] = disp_w
-        mode = st.session_state.get("interaction_mode", "Draw box")
 
-        M = rec.get("masks")
-
+        # handle interaction modes for the image (e.g. draw box, draw mask, remove mask, etc)
+        mode = st.session_state.get(
+            "interaction_mode", "Draw box"
+        )  # default to draw box
         if mode == "Draw mask":
             _handle_draw_mask_mode(
                 rec=rec,

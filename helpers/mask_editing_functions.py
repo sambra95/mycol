@@ -634,33 +634,22 @@ def render_display_and_interact_fragment(key_ns="edit", scale=1.5):
 
     # toggles for overlay and normalization of display
     c1, c2 = st.columns([1, 4])
-
-    # # Niter
-    # niter = st.number_input(
-    #     "Niter",
-    #     value=int(st.session_state["cp_niter"]),
-    #     min_value=0,
-    #     step=10,
-    #     key="w_cp_niter",
-    #     help="Higher values favour longer, stringier, cells.",
-    # )
-    # st.session_state["cp_niter"] = niter
-
     with c1:
+
+        # toggle to show/hide masks overlay
         show_overlay_toggle = st.toggle(
             "Show masks",
             key="show_overlay_w",
             value=st.session_state.get("show_overlay", True),
         )
-
         st.session_state["show_overlay"] = show_overlay_toggle
 
+        # toggle to normalize background image
         normalize_image_toggle = st.toggle(
             "Normalize image",
             key="show_normalized_w",
             value=st.session_state.get("show_normalized", True),
         )
-
         st.session_state["show_normalized"] = normalize_image_toggle
 
     with c2:

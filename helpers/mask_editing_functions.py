@@ -414,33 +414,20 @@ def render_cellpose_hyperparameters_fragment():
     )
     st.session_state["cp_ch2"] = st.session_state["w_cp_ch2"]
 
-    # Diameter: auto (None) or manual
-    diam_mode = st.selectbox(
-        "Diameter mode",
-        ["Auto (None)", "Manual"],
-        index=(
-            0
-            if st.session_state.get("cp_diam_mode", "Auto (None)") == "Auto (None)"
-            else 1
-        ),
-        key="w_cp_diam_mode",
-        help="Leave as Auto for Cellpose to estimate diameter, or set a manual value.",
-    )
-    st.session_state["cp_diam_mode"] = diam_mode
     # diam_val = None
-    if diam_mode == "Manual":
-        diam_val = st.number_input(
-            "Manual diameter (pixels)",
-            min_value=0.0,
-            value=float(st.session_state.get("cp_diameter", 0.0)),
-            step=1.0,
-            key="w_cp_diameter",
-        )
-        st.session_state["cp_diameter"] = diam_val
+    diam_val = st.number_input(
+        "Mean cell diameter (pixels)",
+        min_value=0,
+        value=st.session_state.get("cp_diameter", 0),
+        step=1,
+        help="Leave as 0 for Cellpose to estimate diameter, or set a manual value.",
+        key="w_cp_diameter",
+    )
+    st.session_state["cp_diameter"] = diam_val
 
     # Thresholds & size
     cellprob = st.number_input(
-        "Cellprob threshold",
+        "Cell probability threshold",
         value=float(st.session_state.get("cp_cellprob_threshold")),
         step=0.1,
         key="w_cp_cellprob_threshold",
@@ -456,7 +443,7 @@ def render_cellpose_hyperparameters_fragment():
     )
     st.session_state["cp_flow_threshold"] = flowthr
     min_size = st.number_input(
-        "Minimum size (pixels)",
+        "Minimum cell size (pixels)",
         value=int(st.session_state.get("cp_min_size")),
         min_value=0,
         step=10,
@@ -474,10 +461,6 @@ def render_cellpose_hyperparameters_fragment():
         help="Higher values favour longer, stringier, cells.",
     )
     st.session_state["cp_niter"] = niter
-
-    # sync diameter to None when Auto selected
-    if st.session_state.get("cp_diam_mode", "Auto (None)") == "Auto (None)":
-        st.session_state["cp_diameter"] = None
 
 
 def render_box_tools_fragment(key_ns="side"):

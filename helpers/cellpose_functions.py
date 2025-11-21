@@ -494,9 +494,6 @@ def get_cellpose_hparams_from_state():
     ch1 = int(st.session_state.get("cp_ch1"))
     ch2 = int(st.session_state.get("cp_ch2"))
     diameter = st.session_state.get("cp_diameter")
-    # ensure None if 0.0 when Auto
-    if st.session_state.get("cp_diam_mode", "Auto (None)") == "Auto (None)":
-        diameter = None
 
     return dict(
         channels=(ch1, ch2),

@@ -248,22 +248,25 @@ def classify_actions_fragment():
     rec = get_current_rec()
 
     col1, col2 = st.columns(2)
-    col1.button(
-        "Classify cells",
-        use_container_width=True,
-        on_click=lambda: classify_cells_with_densenet(rec),
-        help="Classify all masks in this image with the loaded Densenet121 model.",
-        disabled=st.session_state["densenet_model"] == None,
-    )
-
-    col2.button(
-        "Batch classify cells",
-        key="btn_batch_classify_cellpose",
-        use_container_width=True,
-        on_click=batch_classify,
-        help="Batch classify all masks in all images with the loaded Densenet121 model.",
-        disabled=st.session_state["densenet_model"] == None,
-    )
+    with col1:
+        if st.button(
+            "Classify cells",
+            use_container_width=True,
+            help="Classify all masks in this image with the loaded Densenet121 model.",
+            disabled=st.session_state["densenet_model"] == None,
+        ):
+            classify_cells_with_densenet(rec)
+            st.rerun()
+    with col2:
+        if st.button(
+            "Batch classify cells",
+            key="btn_batch_classify_cellpose",
+            use_container_width=True,
+            help="Batch classify all masks in all images with the loaded Densenet121 model.",
+            disabled=st.session_state["densenet_model"] == None,
+        ):
+            batch_classify()
+            st.rerun()
 
 
 def batch_classify():
@@ -271,8 +274,11 @@ def batch_classify():
     ok = ordered_keys()
     if not ok:
         return
+    n = len(ok)
+    pb = st.progress(0.0, text="Starting…")
     for i, k in enumerate(ok, 1):
         classify_cells_with_densenet(st.session_state.images.get(k))
+        pb.progress(i / n, text=f"Classified {i}/{n}")
 
 
 # -----------------------------------------------------#

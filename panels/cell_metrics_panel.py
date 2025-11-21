@@ -34,6 +34,7 @@ def render_plotting_options():
         key="overlay_datapoints",
     )
 
+    # build the analysis dataframe
     df = build_analysis_df()
     if df.empty:
         st.info("No masks found.")
@@ -54,7 +55,7 @@ def render_plotting_options():
         key="analysis_labels",
     )
 
-    # Metrics multiselect (names must match df columns)
+    # Metrics multiselect (single instance)
     metric_options = [
         col for col in df.columns if col not in ["image", "mask #", "mask label"]
     ]
@@ -69,6 +70,7 @@ def render_plotting_options():
         key="analysis_metrics",
     )
 
+    # render the download button for cell metrics
     st.download_button(
         "Download cell metrics (.zip)",
         data=build_cell_metrics_zip(
@@ -83,10 +85,12 @@ def render_plotting_options():
 
 def render_plotting_main():
 
+    # check for uploaded data
     if not ordered_keys():
         st.info("Upload data and label masks first.")
         return False
 
+    # build dataframes
     df = build_analysis_df()
 
     df_filt = df.copy()
@@ -108,8 +112,8 @@ def render_plotting_main():
         st.info("No data for the selected labels.")
         return
 
+    # plot each metric
     ptype = st.session_state.get("analysis_plot_type", "Violin")
-    plots = []
     for col in metrics:
         fname, fig = (plot_violin if ptype == "Violin" else plot_bar)(df_filt, col)
         st.header(fname)

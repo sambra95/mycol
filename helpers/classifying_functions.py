@@ -3,7 +3,10 @@ import numpy as np
 import streamlit as st
 
 from helpers.state_ops import ordered_keys, get_current_rec
-from helpers.densenet_functions import classify_cells_with_densenet
+from helpers.densenet_functions import (
+    classify_cells_with_densenet,
+    densenet_mapping_fragment,
+)
 
 ss = st.session_state
 
@@ -281,6 +284,10 @@ def classify_actions_fragment():
             batch_classify()
             st.rerun()
 
+    # ↓ new mapping UI shown below the buttons
+    with st.popover("Map predictions to classes", use_container_width=True):
+        densenet_mapping_fragment()
+
 
 def batch_classify():
     """classify masks in the all images"""
@@ -340,6 +347,8 @@ def class_manage_fragment(key_ns="side"):
 
     st.markdown("### Add or remove classes")
 
+    st.caption("Add new classes, delete existing classes, or rename classes.")
+
     # add new class by typing in the text box
     st.text_input(
         "",
@@ -372,7 +381,7 @@ def class_manage_fragment(key_ns="side"):
         st.text_input(
             "New label",
             key=f"{key_ns}_rename_to",
-            placeholder="Type the new class name and press Enter",
+            placeholder="Type new class name here",
             on_change=lambda: rename_class_from_input(
                 f"{key_ns}_rename_from", f"{key_ns}_rename_to"
             ),

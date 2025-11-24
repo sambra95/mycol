@@ -7,6 +7,85 @@ import os
 import tempfile
 import hashlib
 
+from pathlib import Path
+from tensorflow.keras.models import (
+    load_model,
+    Model,
+)  # you already import these in render_main
+import io
+
+ss = st.session_state
+
+
+def load_demo_data():
+    """Load demo images, masks, Cellpose model and Densenet model into session_state."""
+
+    DEMO_MASK_SUFFIX = "_masks"
+
+    # ---------- locate demo_data folder ----------
+    demo_root = Path(__file__).resolve().parent.parent / "demo_data"
+    images_dir = demo_root / "images"
+    masks_dir = demo_root / "masks"
+
+    # ---------- prepare image & mask 'uploaded' files ----------
+    image_exts = {".tif", ".tiff", ".png", ".jpg", ".jpeg"}
+    mask_exts = {".tif", ".tiff", ".npy"}
+
+    file_objs = []
+
+    # images
+    for p in sorted(images_dir.iterdir()):
+        if p.suffix.lower() in image_exts:
+            file_objs.append(open(p, "rb"))  # behaves enough like st.UploadedFile
+
+    # masks
+    for p in sorted(masks_dir.iterdir()):
+        if p.suffix.lower() in mask_exts:
+            file_objs.append(open(p, "rb"))
+
+    # use the same suffix that matches demo masks
+    ss["mask_suffix"] = DEMO_MASK_SUFFIX
+
+    # process images + masks through existing pipeline
+    skipped = process_uploads(file_objs, DEMO_MASK_SUFFIX) or []
+    ss["skipped_files"] = skipped
+
+    # close the file handles now that everything is loaded
+    for f in file_objs:
+        try:
+            f.close()
+        except Exception:
+            pass
+
+    # ---------- load Cellpose model from disk ----------
+    cellpose_path = demo_root / "cellpose_model.pt"
+    if cellpose_path.exists():
+        ss["cellpose_model_bytes"] = cellpose_path.read_bytes()
+        ss["cellpose_model_name"] = cellpose_path.name
+
+    # ---------- load Densenet model from disk ----------
+    densenet_path = demo_root / "densenet_demo.keras"
+    if densenet_path.exists():
+        data = densenet_path.read_bytes()
+        ext = densenet_path.suffix.lower() or ".keras"
+        h = hashlib.sha1(data).hexdigest()[:12]
+        tmp_path = os.path.join(tempfile.gettempdir(), f"densenet_{h}{ext}")
+        if not os.path.exists(tmp_path):
+            with open(tmp_path, "wb") as f:
+                f.write(data)
+
+        model = load_model(tmp_path, compile=False, safe_mode=False)
+        if isinstance(model.outputs, (list, tuple)) and len(model.outputs) > 1:
+            model = Model(model.inputs, model.outputs[0])  # single-output wrapper
+
+        ss["densenet_model"] = model
+        ss["densenet_model_path"] = tmp_path
+        ss["densenet_ckpt_name"] = densenet_path.name
+
+    # ---------- notify + refresh UI ----------
+    st.toast("Demo data loaded.")
+    st.rerun()
+
 
 def render_main():
 
@@ -37,7 +116,7 @@ def render_main():
                 help="Unrecognised mask formats or extensions or masks without a paired image will be ignored.",
             )
 
-            # 👇 allow user to specify mask suffix (default "_masks")
+            # allow user to specify mask suffix (default "_masks")
             mask_suffix = st.text_input(
                 "Mask files must match image an name plus this suffix",
                 value=ss.get("mask_suffix", "_masks"),
@@ -49,6 +128,10 @@ def render_main():
                 ss["skipped_files"] = process_uploads(files, mask_suffix) or []
                 ss["uploader_nonce"] = ss.get("uploader_nonce", 0) + 1
                 st.rerun()
+
+            if st.button("Use demo data", use_container_width=True):
+                load_demo_data()
+
     with col2:
         with st.container(border=True, height=350):
             # ---- Cellpose model (custom weights) ----

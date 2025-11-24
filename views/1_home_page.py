@@ -91,7 +91,7 @@ with col1:
 
         # display text first
         with st.container(border=False, height=560):
-            st.markdown(get_text_for(current_path), use_unsafe_html=True)
+            st.markdown(get_text_for(current_path))
 
         # then buttons (visually below text, but still inside bordered container)
         col_a, col_b = st.columns(2)

@@ -148,7 +148,7 @@ def ensure_densenet_class_map() -> dict[int, str | None]:
 
     class_map = ss.setdefault("densenet_class_map", {})
 
-    # Make sure we have a key for each model output index
+    # Make sure there is a key for each model output index
     for idx in range(n_classes):
         class_map.setdefault(idx, None)  # None means "not mapped / No label"
     ss["densenet_class_map"] = class_map
@@ -178,10 +178,6 @@ def densenet_mapping_fragment():
     )
 
     for idx in range(n_classes):
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            # you can change this text to 'Class 1', 'Class 2' if you prefer 1-based
-            st.write(f"**Model class {idx}**")
 
         current = class_map.get(idx)
         options = all_classes  # existing labels, including 'No label'
@@ -192,13 +188,12 @@ def densenet_mapping_fragment():
         else:
             default_idx = options.index("No label") if "No label" in options else 0
 
-        with col2:
-            selected = st.selectbox(
-                label=f"Map model class {idx} to",
-                options=options,
-                index=default_idx,
-                key=f"densenet_map_{idx}",
-            )
+        selected = st.selectbox(
+            label=f"Map model class {idx+1} to",
+            options=options,
+            index=default_idx,
+            key=f"densenet_map_{idx}",
+        )
 
         class_map[idx] = selected
 

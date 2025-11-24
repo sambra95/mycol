@@ -54,9 +54,6 @@ def render_main():
                 ss["uploader_nonce"] = ss.get("uploader_nonce", 0) + 1
                 st.rerun()
 
-            if st.button("Use demo data", use_container_width=True):
-                load_demo_data()
-
     with col2:
         with st.container(border=True, height=350):
             # ---- Cellpose model (custom weights) ----
@@ -124,6 +121,9 @@ def render_main():
             if st.button("Clear DenseNet-121 model", use_container_width=True):
                 ss["densenet_model"] = None
                 ss["densenet_ckpt_name"] = None
+
+    if st.button("Use demo data", use_container_width=True, type="primary"):
+        load_demo_data()
 
     # ---- Status panel ----
     st.divider()

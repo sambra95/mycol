@@ -23,6 +23,7 @@ from helpers.state_ops import (
     ordered_keys,
     stem,
     set_current_by_index,
+    reset_global_state,
 )
 
 from helpers.cellpose_functions import normalize_image
@@ -43,10 +44,26 @@ import io
 ss = st.session_state
 
 
+class DemoUploadedFile(io.BytesIO):
+    """
+    Mimics Streamlit's UploadedFile using only the basename of a file path.
+    """
+
+    def __init__(self, file_path: Path):
+        self._path = Path(file_path)
+        super().__init__(self._path.read_bytes())
+
+    @property
+    def name(self):
+        return self._path.name
+
+
 def load_demo_data():
     """Load demo images, masks, Cellpose model and Densenet model into session_state."""
 
     DEMO_MASK_SUFFIX = "_masks"
+
+    reset_global_state()
 
     # ---------- locate demo_data folder ----------
     demo_root = Path(__file__).resolve().parent.parent / "demo_data"
@@ -62,12 +79,12 @@ def load_demo_data():
     # images
     for p in sorted(images_dir.iterdir()):
         if p.suffix.lower() in image_exts:
-            file_objs.append(open(p, "rb"))  # behaves enough like st.UploadedFile
+            file_objs.append(DemoUploadedFile(p))  # behaves enough like st.UploadedFile
 
     # masks
     for p in sorted(masks_dir.iterdir()):
         if p.suffix.lower() in mask_exts:
-            file_objs.append(open(p, "rb"))
+            file_objs.append(DemoUploadedFile(p))
 
     # use the same suffix that matches demo masks
     ss["mask_suffix"] = DEMO_MASK_SUFFIX

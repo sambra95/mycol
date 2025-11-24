@@ -12,6 +12,8 @@ ensure_global_state()
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 configure_tf_cpu_only()
 
+
+# restyle top navbar
 st.html(
     """
 <style>

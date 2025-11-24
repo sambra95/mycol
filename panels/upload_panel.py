@@ -2,7 +2,11 @@ import streamlit as st
 from helpers.state_ops import (
     ordered_keys,
 )
-from helpers.upload_download_functions import process_uploads, render_images_form
+from helpers.upload_download_functions import (
+    process_uploads,
+    render_images_form,
+    load_demo_data,
+)
 import os
 import tempfile
 import hashlib
@@ -37,7 +41,7 @@ def render_main():
                 help="Unrecognised mask formats or extensions or masks without a paired image will be ignored.",
             )
 
-            # 👇 allow user to specify mask suffix (default "_masks")
+            # allow user to specify mask suffix (default "_masks")
             mask_suffix = st.text_input(
                 "Mask files must match image an name plus this suffix",
                 value=ss.get("mask_suffix", "_masks"),
@@ -49,6 +53,7 @@ def render_main():
                 ss["skipped_files"] = process_uploads(files, mask_suffix) or []
                 ss["uploader_nonce"] = ss.get("uploader_nonce", 0) + 1
                 st.rerun()
+
     with col2:
         with st.container(border=True, height=350):
             # ---- Cellpose model (custom weights) ----
@@ -116,6 +121,9 @@ def render_main():
             if st.button("Clear DenseNet-121 model", use_container_width=True):
                 ss["densenet_model"] = None
                 ss["densenet_ckpt_name"] = None
+
+    if st.button("Use demo data", use_container_width=True, type="primary"):
+        load_demo_data()
 
     # ---- Status panel ----
     st.divider()

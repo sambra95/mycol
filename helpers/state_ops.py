@@ -69,6 +69,7 @@ def ensure_global_state() -> None:
     ss.setdefault("all_classes", ["No label"])
     ss.setdefault("side_current_class", ss["all_classes"][0])
     ss.setdefault("cp_grid_results_df", None)
+    ss.setdefault("densenet_class_map", {})  # {pred_class_idx:int -> app_label:str}
 
 
 def reset_global_state() -> None:

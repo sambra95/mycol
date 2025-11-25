@@ -2,7 +2,10 @@ import streamlit as st
 from panels import mask_editing_panel
 
 
-# Page-specific sidebar
+# Warning if no images have been uploaded yet
+if st.session_state["images"] == {}:
+    st.warning("⚠️ Please upload an image on the 'Upload Models and Data' tab first.")
+    st.stop()
 
 col1, col2 = st.columns([2, 5])
 with col1:

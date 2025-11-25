@@ -518,7 +518,7 @@ def finetune_densenet(input_size, batch_size, epochs, val_split):
 
     # Train
     es = EarlyStopping(
-        monitor="val_loss", patience=15, restore_best_weights=True, verbose=1
+        monitor="val_loss", patience=30, restore_best_weights=True, verbose=1
     )
     with st.spinner("Training DenseNet…"):
         history = model.fit(

@@ -65,10 +65,7 @@ def load_demo_data():
     reset_global_state()
 
     # ---------- locate demo_data folder ----------
-    this_dir = Path(__file__).resolve().parent  # .../sam_based_fungal_app/helpers
-    project_root = this_dir.parent
-    demo_root = project_root / "demo_data"  # .../sam_based_fungal_app/demo_data
-
+    demo_root = Path("demo_data")  # project-relative, like intro_images
     images_dir = demo_root / "images"
     masks_dir = demo_root / "masks"
 

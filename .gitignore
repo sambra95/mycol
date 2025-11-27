@@ -6,7 +6,6 @@ models/
 
 # Ignore all .log files anywhere
 *.log
-*.tif
 *.npy
 *.DS_Store
 

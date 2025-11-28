@@ -12,7 +12,7 @@ from helpers.classifying_functions import color_hex_for
 from scipy.ndimage import binary_erosion
 
 
-def _hex_for_plot_label(label: str) -> str:
+def hex_for_plot_label(label: str) -> str:
     """
     Map plotting labels to the same hex used for masks.
     'Unlabelled' and 'No label' both use the reserved 'No label' color.
@@ -30,11 +30,12 @@ def plot_violin(df: pd.DataFrame, value_col: str):
     order = sorted(df["label"].unique(), key=lambda x: (x != "Unlabelled", str(x)))
 
     # use mask colors
-    color_map = {lab: _hex_for_plot_label(lab) for lab in order}
+    color_map = {lab: hex_for_plot_label(lab) for lab in order}
 
     show_points = bool(st.session_state.get("overlay_datapoints", False))
     fig = go.Figure()
 
+    # violin traces per label
     for lab in order:
         idx = df["label"] == lab
         vals = df.loc[idx, value_col]
@@ -58,6 +59,7 @@ def plot_violin(df: pd.DataFrame, value_col: str):
             )
         )
 
+        # optional data points overlaid
         if show_points and len(vals) > 0:
             imgs = df.loc[idx, "image"].astype(str).to_numpy()
             masks = df.loc[idx, "mask #"].astype(str).to_numpy()
@@ -90,6 +92,7 @@ def plot_violin(df: pd.DataFrame, value_col: str):
                 )
             )
 
+    # final layout
     fig.update_layout(
         violinmode="overlay",
         xaxis_title="Label",
@@ -118,7 +121,7 @@ def plot_bar(df: pd.DataFrame, value_col: str):
 
     # numeric x positions and colors
     xpos = np.arange(len(order), dtype=float)
-    colors = [_hex_for_plot_label(lab) for lab in order]
+    colors = [hex_for_plot_label(lab) for lab in order]
 
     # bar means + SD
     g = df.groupby("label")[value_col]
@@ -205,7 +208,7 @@ def add_data_points_to_plot(plot, order, sub, value_col, xpos):
     return traces
 
 
-def _safe_div(num, den):
+def safe_div(num, den):
     """Return num / den, but np.nan if den is 0 or not finite."""
     if den == 0 or not np.isfinite(den):
         return float("nan")
@@ -240,23 +243,23 @@ def mask_shape_metrics(prop, max_edge_to_edge=None):
     # Classic circularity / roundness measure:
     #   circularity = 4*pi*area / perimeter^2
     # = 1 for a perfect circle, < 1 for other shapes.
-    circularity = _safe_div(4.0 * np.pi * area, perimeter**2)
+    circularity = safe_div(4.0 * np.pi * area, perimeter**2)
 
     # Alternative "roundness" using major axis:
     #   roundness = 4*area / (pi * major_axis_length^2)
     # again 1 for a perfect circle if major_axis_length is the diameter.
     if major > 0:
-        roundness = _safe_div(4.0 * area, np.pi * major**2)
+        roundness = safe_div(4.0 * area, np.pi * major**2)
     else:
         roundness = float("nan")
 
     # Aspect ratio (elongated shapes >> 1)
-    aspect_ratio = _safe_div(major, minor) if minor > 0 else float("nan")
+    aspect_ratio = safe_div(major, minor) if minor > 0 else float("nan")
 
     # Elongation in [0, 1):
     #   0 -> circle-like, ->1 very elongated
     elongation = (
-        _safe_div(major - minor, major + minor) if (major + minor) > 0 else float("nan")
+        safe_div(major - minor, major + minor) if (major + minor) > 0 else float("nan")
     )
 
     # Solidity = area / convex_area (1 for convex shapes)
@@ -269,14 +272,14 @@ def mask_shape_metrics(prop, max_edge_to_edge=None):
     eccentricity = float(getattr(prop, "eccentricity", float("nan")))
 
     # Compactness (inverse of circularity, higher = less compact)
-    compactness = _safe_div(perimeter**2, 4.0 * np.pi * area)
+    compactness = safe_div(perimeter**2, 4.0 * np.pi * area)
 
     # Bounding box aspect ratio
     minr, minc, maxr, maxc = prop.bbox
     bbox_h = float(maxr - minr)
     bbox_w = float(maxc - minc)
     bbox_aspect = (
-        _safe_div(max(bbox_h, bbox_w), min(bbox_h, bbox_w))
+        safe_div(max(bbox_h, bbox_w), min(bbox_h, bbox_w))
         if min(bbox_h, bbox_w) > 0
         else float("nan")
     )
@@ -284,7 +287,7 @@ def mask_shape_metrics(prop, max_edge_to_edge=None):
     # Normalized internal chord length (if you pass max_edge_to_edge)
     # e.g. compare longest internal chord to major axis length
     if max_edge_to_edge is not None and major > 0:
-        chord_over_major = _safe_div(max_edge_to_edge, major)
+        chord_over_major = safe_div(max_edge_to_edge, major)
     else:
         chord_over_major = float("nan")
 
@@ -302,7 +305,7 @@ def mask_shape_metrics(prop, max_edge_to_edge=None):
     }
 
 
-def _bresenham(r0, c0, r1, c1):
+def bresenham(r0, c0, r1, c1):
     """
     Bresenham's line algorithm between (r0, c0) and (r1, c1).
     Returns an array of shape (N, 2) with the (row, col) coordinates of the pixels on the line.
@@ -336,7 +339,7 @@ def _bresenham(r0, c0, r1, c1):
     return np.asarray(pts, np.int64)
 
 
-def _boundary_pixels(mask):
+def boundary_pixels(mask):
     """
     Returns an array of shape (N, 2) with the (row, col) coordinates of the boundary pixels of the binary mask.
     """
@@ -347,14 +350,14 @@ def _boundary_pixels(mask):
     return np.argwhere(mask & ~er)
 
 
-def _longest_edge_to_edge(prop, max_points=1000, topk=8, rng_seed=0):
+def longest_edge_to_edge(prop, max_points=1000, topk=8, rng_seed=0):
     """
     Returns the length (float) of the longest internal chord within the region `prop`,
     computed by testing Bresenham lines between boundary pixels and requiring the
     entire line to lie inside the region. Pixel spacing is assumed to be (1,1).
     """
     reg = prop.image.astype(bool)
-    b = _boundary_pixels(reg)
+    b = boundary_pixels(reg)
 
     # Degenerate cases
     if len(b) < 2:
@@ -388,7 +391,7 @@ def _longest_edge_to_edge(prop, max_points=1000, topk=8, rng_seed=0):
             if d2_pix <= best2:
                 break
 
-            pts = _bresenham(rA, cA, rB, cB)
+            pts = bresenham(rA, cA, rB, cB)
             rr, cc = pts[:, 0], pts[:, 1]
 
             # Bounds & inside checks
@@ -430,7 +433,7 @@ def build_analysis_df():
             cls = labdict.get(iid)
 
             # precompute your existing chord metric
-            max_ete = _longest_edge_to_edge(prop)
+            max_ete = longest_edge_to_edge(prop)
 
             # compute shape metrics
             shape_metrics = mask_shape_metrics(prop, max_edge_to_edge=max_ete)

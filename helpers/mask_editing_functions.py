@@ -6,16 +6,14 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 from PIL import Image, ImageDraw
-from scipy import ndimage as ndi
 
-from helpers.state_ops import ordered_keys, get_current_rec, set_current_by_index
+from helpers.state_ops import get_current_rec
 from helpers.classifying_functions import classes_map_from_labels, create_colour_palette
 from helpers.cellpose_functions import normalize_image
 from helpers.sam2_functions import (
     segment_with_sam2,
     _clear_boxes,
     box_draw_fragment,
-    keep_largest_part,
     integrate_new_mask,
 )
 
@@ -623,92 +621,44 @@ def render_display_and_interact_fragment(key_ns="edit", scale=1.5):
 
     # get current record and verify that images are uploaded
     rec = get_current_rec()
-    if rec is None:
-        st.warning("Upload an image in **Upload data** first.")
-        return
 
-    ok = ordered_keys()
-    names = [st.session_state.images[k]["name"] for k in ok]
-    reck = st.session_state.current_key
-    rec_idx = ok.index(reck) if reck in ok else 0
+    # display image with masks overlay and interaction
+    rec_for_disp = rec
+    if st.session_state.get(
+        "show_normalized"
+    ):  # normalize background image if selected
+        im = normalize_image(rec["image"])
+        rec_for_disp = dict(rec)
+        rec_for_disp["image"] = im
 
-    # toggles for overlay and normalization of display
-    c1, c2 = st.columns([1, 4])
-    with c1:
+    base_img, display_for_ui, disp_w, disp_h = create_image_display(rec_for_disp, scale)
+    st.session_state["disp_w"] = disp_w
 
-        # toggle to show/hide masks overlay
-        show_overlay_toggle = st.toggle(
-            "Show masks",
-            key="show_overlay_w",
-            value=st.session_state.get("show_overlay", True),
+    # handle interaction modes for the image (e.g. draw box, draw mask, remove mask, etc)
+    mode = st.session_state.get("interaction_mode", "Draw box")  # default to draw box
+    if mode == "Draw mask":
+        _handle_draw_mask_mode(
+            rec=rec,
+            display_for_ui=display_for_ui,
+            disp_w=disp_w,
+            disp_h=disp_h,
+            key_ns=key_ns,
         )
-        st.session_state["show_overlay"] = show_overlay_toggle
-
-        # toggle to normalize background image
-        normalize_image_toggle = st.toggle(
-            "Normalize image",
-            key="show_normalized_w",
-            value=st.session_state.get("show_normalized", True),
+    elif mode == "Draw box":
+        _handle_draw_box_mode(
+            rec=rec,
+            display_for_ui=display_for_ui,
+            disp_w=disp_w,
+            disp_h=disp_h,
+            key_ns=key_ns,
         )
-        st.session_state["show_normalized"] = normalize_image_toggle
-
-    with c2:
-        st.info(f"**Image {rec_idx+1}/{len(ok)}:** {names[rec_idx]}")
-
-        # slider to move between images
-        jump = st.slider(
-            "Image index",
-            1,
-            len(ok),
-            value=st.session_state["current_key"],
-            key="slider_jump",
-            label_visibility="collapsed",
+    elif mode == "Remove mask":
+        _handle_remove_mask_mode(
+            base_img=base_img,
+            disp_w=disp_w,
         )
-        if (jump - 1) != rec_idx:
-            set_current_by_index(jump - 1)
-            st.rerun()
-
-        # display image with masks overlay and interaction
-        rec_for_disp = rec
-        if st.session_state.get(
-            "show_normalized"
-        ):  # normalize background image if selected
-            im = normalize_image(rec["image"])
-            rec_for_disp = dict(rec)
-            rec_for_disp["image"] = im
-
-        base_img, display_for_ui, disp_w, disp_h = create_image_display(
-            rec_for_disp, scale
+    elif mode == "Click Assign":
+        _handle_assign_class_mode(
+            base_img=base_img,
+            disp_w=disp_w,
         )
-        st.session_state["disp_w"] = disp_w
-
-        # handle interaction modes for the image (e.g. draw box, draw mask, remove mask, etc)
-        mode = st.session_state.get(
-            "interaction_mode", "Draw box"
-        )  # default to draw box
-        if mode == "Draw mask":
-            _handle_draw_mask_mode(
-                rec=rec,
-                display_for_ui=display_for_ui,
-                disp_w=disp_w,
-                disp_h=disp_h,
-                key_ns=key_ns,
-            )
-        elif mode == "Draw box":
-            _handle_draw_box_mode(
-                rec=rec,
-                display_for_ui=display_for_ui,
-                disp_w=disp_w,
-                disp_h=disp_h,
-                key_ns=key_ns,
-            )
-        elif mode == "Remove mask":
-            _handle_remove_mask_mode(
-                base_img=base_img,
-                disp_w=disp_w,
-            )
-        elif mode == "Click Assign":
-            _handle_assign_class_mode(
-                base_img=base_img,
-                disp_w=disp_w,
-            )

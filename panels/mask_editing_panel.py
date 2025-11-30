@@ -91,17 +91,21 @@ def render_classify_sidebar(*, key_ns: str = "side"):
 
         class_selection_fragment()
 
-        with st.popover("Classify cells with Densenet", use_container_width=True):
-
-            # After the for-loop
-            if all(
+        # Show warning if a classifier is loaded but all labels are "No label"
+        if not st.session_state["densenet_model"] == None:
+            needs_mapping = all(
                 label == "No label"
                 for label in st.session_state["densenet_class_map"].values()
-            ):
+            )
+
+            if needs_mapping:
                 st.warning(
                     "All model predictions are currently mapped to 'No label'. "
                     "Please assign at least one label under 'Map predictions to classes' below."
                 )
+
+        # Action buttons to classify cells with Densenet
+        with st.popover("Classify cells with Densenet", use_container_width=True):
 
             classify_actions_fragment()
 

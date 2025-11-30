@@ -234,7 +234,7 @@ def create_row(name: str, key: str, mode_ns: str = "side"):
 
     # sets the current assignable class by clicking to the row's displayed class
     c3.button(
-        "Assign label",
+        "Click Assign",
         key=f"{key}_select",
         use_container_width=True,
         on_click=_select,

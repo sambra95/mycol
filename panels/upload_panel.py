@@ -20,7 +20,9 @@ def render_main():
     skipped = ss.pop("skipped_files", None)
     if skipped:
         st.toast(
-            f"**The following files could not be uploaded**: {', '.join(skipped)}",
+            "**The following files could not be uploaded:**  \n"
+            + "  \n".join(f"• {f}" for f in skipped),
+            duration="infinite",
         )
 
     # ---------- Layout: 3 columns ----------

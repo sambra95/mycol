@@ -7,6 +7,7 @@ import itertools
 from cellpose import models, metrics, core
 import torch
 import io as IO
+import optuna
 
 from helpers.state_ops import ordered_keys
 from helpers.densenet_functions import (
@@ -227,7 +228,12 @@ def render_cellpose_options(key_ns="train_cellpose"):
         ),  # this line sets the
     )
     ss["cp_max_epoch"] = c2.number_input(
-        "Max epochs", 1, 1000, int(ss["cp_max_epoch"]), step=10
+        "Max epochs",
+        1,
+        1000,
+        int(ss["cp_max_epoch"]),
+        step=10,
+        help="Number of training epochs for fine-tuning. Longer training may improve performance but takes more time.",
     )
     ss["cp_learning_rate"] = c3.number_input(
         "Learning rate",
@@ -235,6 +241,7 @@ def render_cellpose_options(key_ns="train_cellpose"):
         max_value=10.0,
         value=float(ss["cp_learning_rate"]),
         format="%.5f",
+        help="Initial learning rate for the optimizer. Lower values may lead to more stable training.",
     )
     ss["cp_weight_decay"] = c1.number_input(
         "Weight decay",
@@ -244,6 +251,7 @@ def render_cellpose_options(key_ns="train_cellpose"):
         step=1e-8,
         format="%.8f",  # more decimals prevents snapping to 0
         key="cp_weight_decay_input",
+        help="Weight decay over the last epochs of training.",
     )
 
     ss["cp_batch_size"] = c2.selectbox(
@@ -251,83 +259,58 @@ def render_cellpose_options(key_ns="train_cellpose"):
         options=[8, 16, 32, 64],
         index=[8, 16, 32, 64].index(ss["cp_batch_size"]),
         key="cellpose_batch_size",
+        help="Number of images per training batch. Larger batch sizes speed up training but require more memory.",
     )
 
-    ss["cp_training_ch1"] = c3.number_input(
-        "Channel 1",
-        min_value=0,
-        max_value=4,
-        value=int(ss["cp_training_ch1"]),
-        step=1,
-        key="cp_training_ch1_input",
-        help="Set to 0 if single-channel images.",
-    )
+    with c3:
+        chan_col1, chan_col2 = st.columns(2)
+        with chan_col1:
 
-    ss["cp_training_ch2"] = c1.number_input(
-        "Channel 2",
-        min_value=0,
-        max_value=4,
-        value=int(ss["cp_training_ch2"]),
-        step=1,
-        key="cp_training_ch2_input",
-        help="Set to 0 if single-channel images.",
-    )
+            ss["cp_training_ch1"] = st.number_input(
+                "Channel 1",
+                min_value=0,
+                max_value=4,
+                value=int(ss["cp_training_ch1"]),
+                step=1,
+                key="cp_training_ch1_input",
+                help="Set to 0 for grayscale images.",
+            )
+        with chan_col2:
+            ss["cp_training_ch2"] = st.number_input(
+                "Channel 2",
+                min_value=0,
+                max_value=4,
+                value=int(ss["cp_training_ch2"]),
+                step=1,
+                key="cp_training_ch2_input",
+                help="Set to 0 for grayscale images.",
+            )
 
     # --- Hyperparameter tuning toggle + grid inputs ---
+    with c1:
+        subcol1, subcol2 = st.columns([2, 3])
+        with subcol1:
 
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        ss.setdefault("cp_do_gridsearch", False)
-        ss["cp_do_gridsearch"] = st.checkbox(
-            "Optimise hyperparameters",
-            value=bool(ss["cp_do_gridsearch"]),
-        )
-
-    with col2:
-        with st.popover(
-            "Hyperparameter search options",
-            use_container_width=True,
-            help="An exhaustive combinatorial gridsearch will be performed with these values if the 'Optimise hyperparameters' option is selected.",
-        ):
-            st.caption("Provide comma-separated lists. Leave blank to use defaults.")
-
-            # Defaults for the grid
-            ss.setdefault("cp_grid_cellprob", "0.2, 0.0, -0.2")
-            ss.setdefault("cp_grid_flow", "0.3, 0.4, 0.6")
-            ss.setdefault("cp_grid_niter", "1000")
-            ss.setdefault("cp_grid_min_size", "0, 100")
-
-            ss["cp_grid_cellprob"] = st.text_input(
-                "cellprob_threshold values",
-                ss["cp_grid_cellprob"],
-                help="Examples: 0.2, 0.0, -0.2",
-            )
-            ss["cp_grid_flow"] = st.text_input(
-                "flow_threshold values",
-                ss["cp_grid_flow"],
-                help="Examples: 0.3, 0.4, 0.6",
-            )
-            ss["cp_grid_niter"] = st.text_input(
-                "niter values", ss["cp_grid_niter"], help="Examples: 500, 1000"
-            )
-            ss["cp_grid_min_size"] = st.text_input(
-                "min_size values",
-                ss["cp_grid_min_size"],
-                help="Examples: 0, 100, 200",
+            ss.setdefault("cp_do_gridsearch", False)
+            ss["cp_do_gridsearch"] = st.checkbox(
+                "Optimise hyperparameters",
+                value=bool(ss["cp_do_gridsearch"]),
+                help="Gain a small performance bonus by also optmising Cellpose hyperparameters. Remember to set these when using the fine-tuned model later in the 'Annotate Images' page.",
             )
 
-    return True
+        with subcol2:
+            if ss["cp_do_gridsearch"]:
+                ss["cp_n_trials"] = st.slider(
+                    min_value=10,
+                    max_value=60,
+                    value=20,
+                    step=5,
+                    label="Optimisation iterations",
+                    help="Number of hyperparameter combinations to try during optimisation. More trials may yield better results but take longer.",
+                )
 
 
-def render_cellpose_train_fragment():
-    """Runs the full Cellpose fine-tuning pipeline when the button is clicked."""
-
-    # start fine-tuning when button clicked
-    go = st.button("Fine-tune Cellpose", use_container_width=True, type="primary")
-    if not go:
-        return
-
-    # gather training data
+def _get_train_setup():
     recs = {k: st.session_state["images"][k] for k in ordered_keys()}
     base_model = ss.get("cp_base_model")
     epochs = int(ss.get("cp_max_epoch"))
@@ -335,8 +318,10 @@ def render_cellpose_train_fragment():
     wd = float(ss.get("cp_weight_decay"))
     nimg = int(ss.get("cp_batch_size"))
     channels = [ss.get("cp_training_ch1"), ss.get("cp_training_ch2")]
+    return recs, base_model, epochs, lr, wd, nimg, channels
 
-    # fine-tune the cellpose model
+
+def _finetune_cellpose(recs, base_model, epochs, lr, wd, nimg, channels):
     with st.spinner("Fine-tuning Cellpose…"):
         train_losses, test_losses, model_name = finetune_cellpose(
             recs,
@@ -347,155 +332,143 @@ def render_cellpose_train_fragment():
             nimg_per_epoch=nimg,
             channels=channels,
         )
-
-        # store training losses in session state for plotting
         st.session_state["train_losses"] = train_losses
         st.session_state["test_losses"] = test_losses
-
         st.session_state["cellpose_training_losses"] = plot_loss_curve(
             train_losses, test_losses
         )
+    return model_name
 
-    # prepare a evaluation set
+
+def _prepare_eval_data(recs, max_n=40):
     masks = [rec["masks"] for rec in recs.values()]
     images = [rec["image"] for rec in recs.values()]
-
-    # subsample to max 50 images for speed
     N = len(images)
-    sample_n = min(50, N)
+    sample_n = min(max_n, N)
     if N > sample_n:
         rng = np.random.default_rng()
         idx = rng.choice(N, size=sample_n, replace=False)
         images = [images[i] for i in idx]
         masks = [masks[i] for i in idx]
+    return images, masks
 
-    # OPTIONAL: hyperparameter grid search
-    if ss.get("cp_do_gridsearch"):
-        st.subheader("Hyperparameter tuning (grid search)")
 
-        # parse user grid text inputs into lists
-        def _parse_float_list(s, default):
-            s = (s or "").strip()
-            if not s:
-                return default
-            try:
-                return [float(x.strip()) for x in s.split(",")]
-            except Exception:
-                return default
+def _set_cp_hparams(src):
+    ss["cp_cellprob_threshold"] = float(src["cellprob"])
+    ss["cp_flow_threshold"] = float(src["flow_threshold"])
+    ss["cp_min_size"] = int(src["min_size"])
+    ss["cp_niter"] = int(src["niter"])
 
-        def _parse_int_list(s, default):
-            s = (s or "").strip()
-            if not s:
-                return default
-            try:
-                return [int(float(x.strip())) for x in s.split(",")]
-            except Exception:
-                return default
 
-        # build grid lists
-        grid_cellprob = _parse_float_list(
-            ss.get("cp_grid_cellprob", "0.2, 0.0, -0.2"), [0.2, 0.0, -0.2]
+def _run_optuna(images, masks, base_model, channels, model_name):
+    if not ss.get("cp_do_gridsearch"):
+        return channels
+
+    st.subheader("Hyperparameter tuning (Optuna)")
+    ch1 = int(st.session_state.get("cp_ch1"))
+    ch2 = int(st.session_state.get("cp_ch2"))
+    channels = [ch1, ch2]
+
+    use_gpu = core.use_gpu()
+    eval_model = models.CellposeModel(
+        gpu=use_gpu,
+        model_type=base_model if base_model != "scratch" else "cyto2",
+    )
+    ft_bytes = st.session_state.get("cellpose_model_bytes")
+    sd = torch.load(IO.BytesIO(ft_bytes), map_location="cpu")
+    eval_model.net.load_state_dict(sd)
+
+    pb = st.progress(0.0, text="Starting Optuna optimisation…")
+    results = []
+    n_trials = st.session_state.get("cp_n_trials")
+
+    def objective(trial: optuna.trial.Trial) -> float:
+        cellprob = trial.suggest_float("cellprob", -0.2, 0.6, step=0.2)
+        flowthresh = trial.suggest_float("flow_threshold", -0.2, 0.6, step=0.2)
+        niter = trial.suggest_int("niter", 100, 1000, step=100)
+        min_size = trial.suggest_int("min_size", 0, 500, step=50)
+
+        i = trial.number + 1
+        pb.progress(
+            min(i / n_trials, 1.0),
+            text=(
+                f"Trial {i}/{n_trials} "
+                f"(cp={cellprob:.3f}, flow={flowthresh:.3f}, "
+                f"niter={niter}, min={min_size})"
+            ),
         )
-        grid_flow = _parse_float_list(
-            ss.get("cp_grid_flow", "0.3, 0.4, 0.6"), [0.3, 0.4, 0.6]
+
+        masks_pred, _, _ = eval_model.eval(
+            images,
+            channels=channels,
+            diameter=None,
+            cellprob_threshold=cellprob,
+            flow_threshold=flowthresh,
+            niter=niter,
+            min_size=min_size,
         )
-        grid_niter = _parse_int_list(ss.get("cp_grid_niter", "1000"), [1000])
-        grid_min_size = _parse_int_list(ss.get("cp_grid_min_size", "0, 100"), [0, 100])
+        ap = metrics.average_precision(masks, masks_pred)[0]
+        score = float(np.nanmean(ap[:, 0]))
 
-        # Build combinations
-        combos = list(
-            itertools.product(grid_cellprob, grid_flow, grid_niter, grid_min_size)
+        results.append(
+            {
+                "cellprob": cellprob,
+                "flow_threshold": flowthresh,
+                "niter": niter,
+                "min_size": min_size,
+                "ap_iou_0.5": score,
+            }
         )
-        total = len(combos)
-        if total == 0:
-            st.warning("No valid grid combinations. Skipping tuning.")
-        else:
-            # Get channels from session
-            ch1 = int(st.session_state.get("cp_ch1"))
-            ch2 = int(st.session_state.get("cp_ch2"))
-            channels = [ch1, ch2]
+        return score
 
-            # Load the in-memory fine-tuned model from session state
-            # Expecting bytes saved somewhere like "cellpose_model_bytes"
-            use_gpu = core.use_gpu()
-            eval_model = models.CellposeModel(
-                gpu=use_gpu,
-                model_type=base_model if base_model != "scratch" else "cyto2",
-            )
-            ft_bytes = st.session_state.get("cellpose_model_bytes")
+    sampler = optuna.samplers.TPESampler(seed=42)
+    study = optuna.create_study(direction="maximize", sampler=sampler)
+    study.enqueue_trial(
+        {"cellprob": 0.2, "flow_threshold": 0.4, "niter": 1000, "min_size": 100}
+    )
+    study.optimize(objective, n_trials=n_trials)
+    pb.empty()
 
-            sd = torch.load(IO.BytesIO(ft_bytes), map_location="cpu")
-            eval_model.net.load_state_dict(sd)
+    df = pd.DataFrame(results).sort_values(
+        by="ap_iou_0.5", ascending=False, na_position="last"
+    )
+    st.session_state["cp_grid_results_df"] = df
 
-            results = []
-            pb = st.progress(0.0, text="Starting grid search…")
+    st.success(f"Fine-tuning complete ✅ (model: {model_name})")
 
-            # iterate over all hyperparameter combinations and store performance metrics
-            for i, (cellprob, flowthresh, niter, min_size) in enumerate(combos, 1):
-                pb.progress(
-                    i / total,
-                    text=f"Evaluating {i}/{total} (cp={cellprob}, flow={flowthresh}, niter={niter}, min={min_size})",
-                )
-                masks_pred, flows, styles = eval_model.eval(
-                    images,
-                    channels=channels,
-                    diameter=None,
-                    cellprob_threshold=cellprob,
-                    flow_threshold=flowthresh,
-                    niter=niter,
-                    min_size=min_size,
-                )
-                ap = metrics.average_precision(masks, masks_pred)[
-                    0
-                ]  # AP per-image matrix
-                score = float(np.nanmean(ap[:, 0]))  # mean AP at IoU=0.5
+    _set_cp_hparams(study.best_trial.params)
 
-                results.append(
-                    {
-                        "cellprob": cellprob,
-                        "flow_threshold": flowthresh,
-                        "niter": niter,
-                        "min_size": min_size,
-                        "ap_iou_0.5": score,
-                    }
-                )
+    if not df.empty and np.isfinite(df["ap_iou_0.5"].iloc[0]):
+        best = df.iloc[0]
+        _set_cp_hparams(best)
+        st.success(
+            f"Best hyperparameters set: cellprob={best['cellprob']}, "
+            f"flow={best['flow_threshold']}, min_size={int(best['min_size'])}, "
+            f"niter={int(best['niter'])}"
+        )
+    else:
+        st.info("No valid result to set best hyperparameters.")
 
-            pb.empty()
+    return channels
 
-            # store grid results dataframe in session state for later display
-            df = pd.DataFrame(results).sort_values(
-                by="ap_iou_0.5", ascending=False, na_position="last"
-            )
-            st.session_state["cp_grid_results_df"] = df
 
-            st.success(f"Fine-tuning complete ✅ (model: {model_name})")
-
-            # Pick best hyperparameters and push into session state used by the mask editing panel
-            if not df.empty and np.isfinite(df["ap_iou_0.5"].iloc[0]):
-                best = df.iloc[0]
-                ss["cp_cellprob_threshold"] = float(best["cellprob"])
-                ss["cp_flow_threshold"] = float(best["flow_threshold"])
-                ss["cp_min_size"] = int(best["min_size"])
-                ss["cp_niter"] = int(best["niter"])
-                st.success(
-                    f"Best hyperparameters set: cellprob={best['cellprob']}, "
-                    f"flow={best['flow_threshold']}, min_size={int(best['min_size'])}, niter={int(best['niter'])}"
-                )
-
-            else:
-                st.info("No valid result to set best hyperparameters.")
-
-    #  plot model comparison
+def _validate_and_compare(images, masks, channels):
     with st.spinner("Validating model…"):
         use_gpu = core.use_gpu()
         base_model = models.CellposeModel(gpu=use_gpu, model_type=ss["cp_base_model"])
-        base_preds, _, _ = base_model.eval(images, channels=channels)
 
-        # Fine-tuned model from session BYTES
+        hp = dict(
+            diameter=None,
+            cellprob_threshold=float(ss.get("cp_cellprob_threshold")),
+            flow_threshold=float(ss.get("cp_flow_threshold")),
+            niter=int(ss.get("cp_niter")),
+            min_size=int(ss.get("cp_min_size")),
+        )
+
+        base_preds, _, _ = base_model.eval(images, channels=channels, **hp)
         tuned_model = get_cellpose_model()
-        tuned_preds, _, _ = tuned_model.eval(images, channels=channels)
+        tuned_preds, _, _ = tuned_model.eval(images, channels=channels, **hp)
 
-        # compare and plot ious pre and post training
         base_ious = compute_prediction_ious(
             images=images, masks=masks, model=base_model, channels=channels
         )
@@ -504,7 +477,6 @@ def render_cellpose_train_fragment():
         )
         ss["cellpose_iou_comparison"] = plot_iou_comparison(base_ious, tuned_ious)
 
-        # compare and plot true vs predicted counts pre and post training
         gt_counts = [int(np.count_nonzero(np.unique(mask))) for mask in masks]
         base_counts = [int(np.count_nonzero(np.unique(pred))) for pred in base_preds]
         tuned_counts = [int(np.count_nonzero(np.unique(pred))) for pred in tuned_preds]
@@ -517,6 +489,19 @@ def render_cellpose_train_fragment():
         )
 
         ss["cp_zip_bytes"] = build_cellpose_zip_bytes()
+
+
+def render_cellpose_train_fragment():
+    """Runs the full Cellpose fine-tuning pipeline when the button is clicked."""
+    go = st.button("Fine-tune Cellpose", use_container_width=True, type="primary")
+    if not go:
+        return
+
+    recs, base_model, epochs, lr, wd, nimg, channels = _get_train_setup()
+    model_name = _finetune_cellpose(recs, base_model, epochs, lr, wd, nimg, channels)
+    images, masks = _prepare_eval_data(recs)
+    channels = _run_optuna(images, masks, base_model, channels, model_name)
+    _validate_and_compare(images, masks, channels)
 
 
 def show_cellpose_training_plots():

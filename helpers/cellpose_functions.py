@@ -126,28 +126,30 @@ def get_cellpose_weights() -> str | None:
 
 
 def get_cellpose_model():
-    """loads Cellpose model from session state bytes or falls back to built-in weights"""
     ss = st.session_state
-    # tag tracks which bytes are loaded
     tag = (
         hashlib.sha1(ss["cellpose_model_bytes"]).hexdigest()[:12]
         if ss.get("cellpose_model_bytes")
         else "cyto2"
     )
 
-    # return cached model if already loaded
     if ss.get("cellpose_model_obj") is not None and ss.get("cellpose_model_tag") == tag:
         return ss["cellpose_model_obj"]
 
-    # load model from bytes
+    use_gpu = core.use_gpu()
+
     weights_path = get_cellpose_weights()
     if weights_path:
-        model = models.CellposeModel(pretrained_model=weights_path)
+        model = models.CellposeModel(
+            gpu=use_gpu,
+            pretrained_model=weights_path,
+        )
     else:
-        # fallback built-in weights
-        model = models.CellposeModel(pretrained_model="cyto2")
+        model = models.CellposeModel(
+            gpu=use_gpu,
+            pretrained_model="cyto2",
+        )
 
-    # stash in session
     ss["cellpose_model_obj"] = model
     ss["cellpose_model_tag"] = tag
 

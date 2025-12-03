@@ -40,6 +40,8 @@ Mycol is a Streamlit-based application that makes machine-learning-assisted micr
 ## **Installation**
 
 ```bash
+conda create -n mycol_env
+conda activate mycol_env
 git clone https://github.com/<your-username>/mycol.git
 cd mycol
 pip install -r requirements.txt

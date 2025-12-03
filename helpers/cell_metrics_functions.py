@@ -273,16 +273,6 @@ def mask_shape_metrics(prop):
     # Compactness (inverse of circularity, higher = less compact)
     compactness = safe_div(perimeter**2, 4.0 * np.pi * area)
 
-    # Bounding box aspect ratio
-    minr, minc, maxr, maxc = prop.bbox
-    bbox_h = float(maxr - minr)
-    bbox_w = float(maxc - minc)
-    bbox_aspect = (
-        safe_div(max(bbox_h, bbox_w), min(bbox_h, bbox_w))
-        if min(bbox_h, bbox_w) > 0
-        else float("nan")
-    )
-
     return {
         "area": area,
         "perimeter": perimeter,
@@ -296,7 +286,6 @@ def mask_shape_metrics(prop):
         "extent": extent,
         "eccentricity": eccentricity,
         "compactness": compactness,
-        "bbox aspect ratio": bbox_aspect,
     }
 
 
@@ -310,8 +299,7 @@ def build_analysis_df(records):
 
     New columns (from mask_shape_metrics):
         circularity, roundness, aspect ratio, elongation,
-        solidity, extent, eccentricity, compactness,
-        bbox aspect ratio, chord / major axis
+        solidity, extent, eccentricity, compactness, chord / major axis
     """
 
     rows = []
@@ -398,7 +386,7 @@ def show_shape_metric_reference():
 
     st.markdown(
         """
-        Below is a quick reference for the shape metrics computed from each labeled region.
+        Below is a quick reference for the shape descriptors computed from each labeled region.
         Use this as a guide when interpreting the measurements for your segmented cells.
 
         **Notation:**  
@@ -423,56 +411,43 @@ def show_shape_metric_reference():
             "How it is calculated": "Length of the outer contour of the masked region.",
         },
         {
-            "Name": "major axis length",
+            "Name": "major / minor axis lengths",
             "What it describes": (
-                "Longest axis of the best-fit ellipse. "
-                "Larger values (relative to object size) indicate a more elongated object."
+                "The longest (major) and shortest (minor) axes of the best-fit ellipse. "
+                "Larger major axis values (relative to object size) indicate a more elongated object."
             ),
             "How it is calculated": (
-                "Length of the major axis of the ellipse with the same second moments as the region."
+                "Lengths of the major and minor axes of the ellipse with the same second moments "
+                "as the region. These correspond to major_axis_length and minor_axis_length."
             ),
         },
         {
-            "Name": "minor axis length",
-            "What it describes": "Shortest axis of the best-fit ellipse.",
-            "How it is calculated": (
-                "Length of the minor axis of the ellipse with the same second moments as the region."
-            ),
-        },
-        {
-            "Name": "circularity",
+            "Name": "circularity / compactness / roundness",
             "What it describes": (
-                "How close the shape is to a perfect circle. "
-                "Circularity = 1 for a perfect circle; irregular or elongated shapes have values < 1."
-            ),
-            "How it is calculated": "4 · π · A / P²",
-        },
-        {
-            "Name": "roundness",
-            "What it describes": (
-                "Circle-likeness based on the major axis. "
-                "Equals 1 for a perfect circle (if the major axis corresponds to the diameter). "
-                "Lower values indicate elongation."
-            ),
-            "How it is calculated": "4 · A / (π · major_axis_length²)",
-        },
-        {
-            "Name": "aspect ratio",
-            "What it describes": (
-                "Ratio of major to minor axis length. "
-                "Values ≥ 1; higher values indicate more elongation of the best-fit ellipse."
-            ),
-            "How it is calculated": "major_axis_length / minor_axis_length",
-        },
-        {
-            "Name": "elongation",
-            "What it describes": (
-                "Normalized elongation in the range [0, 1). "
-                "Values near 0 indicate circle-like shapes; values approaching 1 indicate strong elongation."
+                "Three related measures of how circle-like and compact a shape is. "
+                "Circularity and roundness are high (≈ 1) for circle-like objects and decrease with "
+                "elongation or irregular boundaries. Compactness is the inverse of circularity and "
+                "increases with boundary irregularity."
             ),
             "How it is calculated": (
-                "(major_axis_length − minor_axis_length) / "
-                "(major_axis_length + minor_axis_length)"
+                "\n- Circularity: 4 · π · A / P²\n"
+                "- Compactness: P² / (4 · π · A)\n"
+                "- Roundness: 4 · A / (π · major_axis_length²)"
+            ),
+        },
+        {
+            "Name": "aspect ratio / elongation / eccentricity",
+            "What it describes": (
+                "Three related measures of how stretched the best-fit ellipse is. "
+                "Aspect ratio compares the major and minor axis lengths (≥ 1). "
+                "Elongation normalizes the difference between axes into the range 0 to 1. "
+                "Eccentricity measures how far the ellipse deviates from a circle, also ranging from 0 to 1."
+            ),
+            "How it is calculated": (
+                "\n- Aspect ratio = major_axis_length / minor_axis_length\n"
+                "- Elongation = (major_axis_length − minor_axis_length)\n"
+                "               / (major_axis_length + minor_axis_length)\n"
+                "- Eccentricity = √(1 − (b² / a²)), using semi-axes a (major) and b (minor)"
             ),
         },
         {
@@ -491,30 +466,6 @@ def show_shape_metric_reference():
                 "Values near 1 indicate that the object nearly fills its bounding box."
             ),
             "How it is calculated": "area / bounding_box_area",
-        },
-        {
-            "Name": "eccentricity",
-            "What it describes": (
-                "Eccentricity of the ellipse with matching second moments. "
-                "0 corresponds to a perfect circle; values approaching 1 correspond to highly elongated shapes."
-            ),
-            "How it is calculated": "√(1 − (b² / a²)), using semi-major axis a and semi-minor axis b.",
-        },
-        {
-            "Name": "compactness",
-            "What it describes": (
-                "Inverse of circularity; a measure of boundary irregularity. "
-                "Equal to 1 for a perfect circle; > 1 for less compact or more jagged shapes."
-            ),
-            "How it is calculated": "P² / (4 · π · A)",
-        },
-        {
-            "Name": "bbox aspect ratio",
-            "What it describes": (
-                "Elongation of the axis-aligned bounding box. "
-                "Values ≥ 1; higher values indicate a more elongated bounding region."
-            ),
-            "How it is calculated": "max(bbox_height, bbox_width) / min(bbox_height, bbox_width)",
         },
     ]
 
@@ -562,6 +513,57 @@ def show_shape_metric_reference():
         ax.set_xlim(0, 1.7)
         ax.set_ylim(0, 1.0)
         ax.axis("off")
+        return fig
+
+    def plot_major_minor_axes():
+        fig, ax = plt.subplots(figsize=(2, 2))
+        ax.set_aspect("equal")
+
+        # Best-fit ellipse
+        ell = Ellipse((0.5, 0.5), 0.7, 0.4, fill=False)
+        ax.add_patch(ell)
+
+        # Major axis (horizontal)
+        ax.annotate(
+            "",
+            xy=(0.15, 0.5),
+            xytext=(0.85, 0.5),
+            arrowprops=dict(arrowstyle="<->", linewidth=1),
+        )
+        ax.text(
+            0.4,
+            0.6,
+            "minor",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
+
+        # Minor axis (vertical)
+        ax.annotate(
+            "",
+            xy=(0.5, 0.3),
+            xytext=(0.5, 0.7),
+            arrowprops=dict(arrowstyle="<->", linewidth=1),
+        )
+        ax.text(
+            0.6,
+            0.53,
+            "major",
+            ha="left",
+            va="center",
+            fontsize=8,
+        )
+
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis("off")
+
+        # --- Reduce whitespace ---
+        ax.margins(0)  # removes auto padding
+        fig.tight_layout(pad=0.1)  # reduces figure padding
+        plt.subplots_adjust(0, 0, 1, 1)  # removes subplot margins
+
         return fig
 
     def plot_aspect_elong_ecc():
@@ -691,21 +693,31 @@ def show_shape_metric_reference():
                 f"**How it is calculated:** {m['How it is calculated']}"
             )
 
-            # Attach the appropriate illustration(s) where relevant
-            if m["Name"] in ["circularity", "compactness"]:
+            if m["Name"] == "circularity / compactness / roundness":
                 fig = plot_circularity_compactness()
                 st.pyplot(fig)
                 st.caption(
                     "For the same area A, shapes with longer perimeters P have lower circularity "
-                    "and higher compactness."
+                    "and roundness, and higher compactness. All three metrics summarize how "
+                    "circle-like and compact the boundary is."
                 )
 
-            if m["Name"] in ["aspect ratio", "elongation", "eccentricity"]:
+            if m["Name"] == "major / minor axis lengths":
+                fig = plot_major_minor_axes()
+                st.pyplot(fig)
+                st.caption(
+                    "The major axis is the longest diameter of the best-fit ellipse; "
+                    "the minor axis is the shortest diameter perpendicular to it. "
+                    "Their lengths are reported as major_axis_length and minor_axis_length."
+                )
+
+            if m["Name"] == "aspect ratio / elongation / eccentricity":
                 fig = plot_aspect_elong_ecc()
                 st.pyplot(fig)
                 st.caption(
-                    "As the ellipse becomes more stretched (larger major_axis_length / minor_axis_length), "
-                    "aspect ratio, elongation, and eccentricity all increase."
+                    "All three metrics describe how stretched the best-fit ellipse is. "
+                    "As the major axis increases relative to the minor axis, aspect ratio, "
+                    "elongation, and eccentricity all increase."
                 )
 
             if m["Name"] == "solidity":
@@ -716,7 +728,7 @@ def show_shape_metric_reference():
                     "Indentations or holes reduce the area relative to the hull, lowering solidity."
                 )
 
-            if m["Name"] in ["extent", "bbox aspect ratio"]:
+            if m["Name"] in ["extent"]:
                 fig = plot_extent_bbox_aspect()
                 st.pyplot(fig)
                 st.caption(

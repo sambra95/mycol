@@ -374,11 +374,16 @@ def build_plots_zip(plot_paths_or_bytes) -> bytes:
     return buf.getvalue()
 
 
-import streamlit as st
-import pandas as pd
-import matplotlib.pyplot as plt
-import numpy as np
-from matplotlib.patches import Circle, Ellipse, Polygon, Rectangle
+from pathlib import Path
+
+# Path to this file
+HERE = Path(__file__).resolve()
+
+# Project root = parent of "helpers"
+PROJECT_ROOT = HERE.parent.parent
+
+# Folder containing the SVG diagrams (sibling of "helpers")
+DIAGRAM_DIR = PROJECT_ROOT / "descriptor_diagrams"
 
 
 def show_shape_metric_reference():
@@ -469,221 +474,6 @@ def show_shape_metric_reference():
         },
     ]
 
-    # --- Helper functions for illustrations ----------------------------------
-
-    def plot_circularity_compactness():
-        fig, ax = plt.subplots(figsize=(3, 3))
-        ax.set_aspect("equal")
-
-        # Circle – high circularity, compact
-        circle = Circle((0.5, 0.5), 0.25, fill=False)
-        ax.add_patch(circle)
-        ax.text(
-            0.5,
-            0.15,
-            "Circle\n(circularity ≈ 1,\ncompactness ≈ 1)",
-            ha="center",
-            va="top",
-            fontsize=8,
-        )
-
-        # Irregular blob – lower circularity, less compact
-        blob = Polygon(
-            [
-                [1.1, 0.75],
-                [1.4, 0.6],
-                [1.35, 0.4],
-                [1.2, 0.3],
-                [1.0, 0.35],
-                [0.95, 0.55],
-            ],
-            closed=True,
-            fill=False,
-        )
-        ax.add_patch(blob)
-        ax.text(
-            1.25,
-            0.15,
-            "Irregular\n(circularity < 1,\ncompactness > 1)",
-            ha="center",
-            va="top",
-            fontsize=8,
-        )
-
-        ax.set_xlim(0, 1.7)
-        ax.set_ylim(0, 1.0)
-        ax.axis("off")
-        return fig
-
-    def plot_major_minor_axes():
-        fig, ax = plt.subplots(figsize=(2, 2))
-        ax.set_aspect("equal")
-
-        # Best-fit ellipse
-        ell = Ellipse((0.5, 0.5), 0.7, 0.4, fill=False)
-        ax.add_patch(ell)
-
-        # Major axis (horizontal)
-        ax.annotate(
-            "",
-            xy=(0.15, 0.5),
-            xytext=(0.85, 0.5),
-            arrowprops=dict(arrowstyle="<->", linewidth=1),
-        )
-        ax.text(
-            0.4,
-            0.6,
-            "minor",
-            ha="center",
-            va="bottom",
-            fontsize=8,
-        )
-
-        # Minor axis (vertical)
-        ax.annotate(
-            "",
-            xy=(0.5, 0.3),
-            xytext=(0.5, 0.7),
-            arrowprops=dict(arrowstyle="<->", linewidth=1),
-        )
-        ax.text(
-            0.6,
-            0.53,
-            "major",
-            ha="left",
-            va="center",
-            fontsize=8,
-        )
-
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.axis("off")
-
-        # --- Reduce whitespace ---
-        ax.margins(0)  # removes auto padding
-        fig.tight_layout(pad=0.1)  # reduces figure padding
-        plt.subplots_adjust(0, 0, 1, 1)  # removes subplot margins
-
-        return fig
-
-    def plot_aspect_elong_ecc():
-        fig, ax = plt.subplots(figsize=(3, 3))
-        ax.set_aspect("equal")
-
-        # Nearly circular ellipse
-        ell1 = Ellipse((0.5, 0.5), 0.4, 0.35, fill=False)
-        ax.add_patch(ell1)
-        ax.text(
-            0.5,
-            0.15,
-            "Almost circle\n(aspect ratio ≈ 1,\nlow elongation,\nlow eccentricity)",
-            ha="center",
-            va="top",
-            fontsize=8,
-        )
-
-        # Elongated ellipse
-        ell2 = Ellipse((1.3, 0.5), 0.7, 0.2, fill=False)
-        ax.add_patch(ell2)
-        ax.text(
-            1.3,
-            0.15,
-            "Elongated\n(aspect ratio ≫ 1,\nhigher elongation,\nhigher eccentricity)",
-            ha="center",
-            va="top",
-            fontsize=8,
-        )
-
-        ax.set_xlim(0, 1.8)
-        ax.set_ylim(0, 1.0)
-        ax.axis("off")
-        return fig
-
-    def plot_solidity():
-        fig, ax = plt.subplots(figsize=(3, 3))
-        ax.set_aspect("equal")
-
-        # Convex shape
-        convex = Polygon(
-            [[0.2, 0.2], [0.6, 0.25], [0.7, 0.6], [0.3, 0.8]],
-            closed=True,
-            fill=False,
-        )
-        ax.add_patch(convex)
-        ax.text(
-            0.4,
-            0.1,
-            "Convex\n(solidity ≈ 1)",
-            ha="center",
-            va="top",
-            fontsize=8,
-        )
-
-        # Shape with indentation (concavity)
-        concave = Polygon(
-            [
-                [1.0, 0.2],
-                [1.4, 0.25],
-                [1.45, 0.5],
-                [1.2, 0.45],
-                [1.35, 0.8],
-                [1.0, 0.75],
-            ],
-            closed=True,
-            fill=False,
-        )
-        ax.add_patch(concave)
-        ax.text(
-            1.25,
-            0.1,
-            "Concave\n(solidity < 1)",
-            ha="center",
-            va="top",
-            fontsize=8,
-        )
-
-        ax.set_xlim(0, 1.8)
-        ax.set_ylim(0, 1.0)
-        ax.axis("off")
-        return fig
-
-    def plot_extent_bbox_aspect():
-        fig, ax = plt.subplots(figsize=(3, 3))
-        ax.set_aspect("equal")
-
-        # Compact object filling box (high extent)
-        bbox1 = Rectangle((0.1, 0.1), 0.6, 0.6, fill=False, linestyle="dotted")
-        ax.add_patch(bbox1)
-        obj1 = Rectangle((0.15, 0.15), 0.5, 0.5, fill=False)
-        ax.add_patch(obj1)
-        ax.text(
-            0.4,
-            0.05,
-            "High extent\n(object almost fills box)",
-            ha="center",
-            va="top",
-            fontsize=8,
-        )
-
-        # Thin object inside tall box (low extent, high bbox aspect ratio)
-        bbox2 = Rectangle((1.0, 0.1), 0.4, 0.8, fill=False, linestyle="dotted")
-        ax.add_patch(bbox2)
-        obj2 = Rectangle((1.05, 0.45), 0.3, 0.1, fill=False)
-        ax.add_patch(obj2)
-        ax.text(
-            1.2,
-            0.05,
-            "Low extent,\nbox aspect ratio ≫ 1",
-            ha="center",
-            va="top",
-            fontsize=8,
-        )
-
-        ax.set_xlim(0, 1.8)
-        ax.set_ylim(0, 1.0)
-        ax.axis("off")
-        return fig
-
     # --- Per-metric expanders ("popovers") -----------------------------------
 
     for m in metrics:
@@ -694,8 +484,11 @@ def show_shape_metric_reference():
             )
 
             if m["Name"] == "circularity / compactness / roundness":
-                fig = plot_circularity_compactness()
-                st.pyplot(fig)
+                st.image(
+                    DIAGRAM_DIR / "circularity_compactness_roundness.svg",
+                    use_container_width=True,
+                )
+
                 st.caption(
                     "For the same area A, shapes with longer perimeters P have lower circularity "
                     "and roundness, and higher compactness. All three metrics summarize how "
@@ -703,8 +496,8 @@ def show_shape_metric_reference():
                 )
 
             if m["Name"] == "major / minor axis lengths":
-                fig = plot_major_minor_axes()
-                st.pyplot(fig)
+                st.image(DIAGRAM_DIR / "axes.svg", use_container_width=True)
+
                 st.caption(
                     "The major axis is the longest diameter of the best-fit ellipse; "
                     "the minor axis is the shortest diameter perpendicular to it. "
@@ -712,8 +505,11 @@ def show_shape_metric_reference():
                 )
 
             if m["Name"] == "aspect ratio / elongation / eccentricity":
-                fig = plot_aspect_elong_ecc()
-                st.pyplot(fig)
+                st.image(
+                    DIAGRAM_DIR / "elongation_eccentricity_aspect_ratio.svg",
+                    use_container_width=True,
+                )
+
                 st.caption(
                     "All three metrics describe how stretched the best-fit ellipse is. "
                     "As the major axis increases relative to the minor axis, aspect ratio, "
@@ -721,16 +517,16 @@ def show_shape_metric_reference():
                 )
 
             if m["Name"] == "solidity":
-                fig = plot_solidity()
-                st.pyplot(fig)
+                st.image(DIAGRAM_DIR / "solidity.svg", use_container_width=True)
+
                 st.caption(
                     "Solidity = area / convex_area. A convex shape matches its convex hull (solidity ≈ 1). "
                     "Indentations or holes reduce the area relative to the hull, lowering solidity."
                 )
 
             if m["Name"] in ["extent"]:
-                fig = plot_extent_bbox_aspect()
-                st.pyplot(fig)
+                st.image(DIAGRAM_DIR / "extent.svg", use_container_width=True)
+
                 st.caption(
                     "Extent measures how much of the bounding box area the object occupies. "
                     "The bounding-box aspect ratio compares its longer side to its shorter side; "

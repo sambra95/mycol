@@ -719,30 +719,26 @@ def classifier_training_plot_help():
         with st.expander("Accuracy, Precision, Recall, and F1 Scores"):
             st.markdown(
                 r"""
-                ### **Accuracy**
-                Proportion of all predictions that are correct.  *Interpretation:* Higher accuracy means the model is correct more often overall.  
-                In multiclass settings, accuracy can look high even if some classes perform poorly.
+                ##### **Accuracy**
+                Proportion of all predictions that are correct.  *Interpretation:* Higher accuracy means the model is correct more often overall. In multiclass settings, accuracy can look high even if some classes perform poorly.
 
                 $$\text{Accuracy} = \frac{TP + TN}{TP + TN + FP + FN}$$
                 
 
-                ### **Precision**
-                Of predicted positives, how many were correct. *Interpretation:* Higher precision means fewer false positives.  
-                In multiclass results (macro/weighted), it reflects how reliably the model’s positive predictions are correct across all classes.  
+                ##### **Precision**
+                Of predicted positives, how many were correct. *Interpretation:* Higher precision means fewer false positives. In multiclass results (macro/weighted), it reflects how reliably the model’s positive predictions are correct across all classes.  
                 
                 $$\text{Precision} = \frac{TP}{TP + FP}$$
                 
 
-                ### **Recall**
-                Of actual positives, how many were correctly identified. *Interpretation:* Higher recall means fewer missed cases.  
-                As an overall metric, it summarizes how well the model captures true instances across all classes.
+                ##### **Recall**
+                Of actual positives, how many were correctly identified. *Interpretation:* Higher recall means fewer missed cases. As an overall metric, it summarizes how well the model captures true instances across all classes.
                 
                 $$\text{Recall} = \frac{TP}{TP + FN}$$
                 
 
-                ### **F1 Score**
-                Harmonic mean of precision and recall. *Interpretation:* Higher F1 means the model maintains a good balance between precision and recall.  
-                Useful in multiclass settings because it is less affected by class imbalance than accuracy alone.  
+                ##### **F1 Score**
+                Harmonic mean of precision and recall. *Interpretation:* Higher F1 means the model maintains a good balance between precision and recall. Useful in multiclass settings because it is less affected by class imbalance than accuracy alone.  
                 
                 $$F1 = 2 \cdot \frac{P \cdot R}{P + R}$$
                 """
@@ -768,7 +764,7 @@ def classifier_training_plot_help():
                 - **Off-diagonal values** → misclassifications (which classes get confused).
                 - Blocks of confusion may indicate:
                     - insufficient training data for certain classes,
-                    - overlapping class definitions,
+                    - classes with very similar cells,
                     - or inadequate model capacity.
 
                 Use this plot to identify which classes require more attention or additional data augmentation.

@@ -567,6 +567,7 @@ def evaluate_fine_tuned_densenet(history, val_gen, classes):
     metrics = {
         "Accuracy": acc,
         "Precision": prec_m,
+        "Recall": rec_m,
         "F1": f1_m,
     }
     ss["densenet_training_metrics"] = plot_densenet_metrics(metrics)
@@ -660,7 +661,7 @@ def plot_densenet_metrics(metrics):
         text=[f"{v:.3f}" for v in values],
         textposition="outside",
         marker=dict(
-            color=["#EBF1F8", "#EBF1F8", "#EBF1F8"],
+            color=["#EBF1F8", "#EBF1F8", "#EBF1F8", "#EBF1F8"],
             line=dict(color="#004280", width=2),
         ),
         name="metrics",

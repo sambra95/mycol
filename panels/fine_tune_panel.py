@@ -621,6 +621,11 @@ def training_plot_help():
                 """
             )
 
+            st.image(
+                DIAGRAM_DIR / "train_test_loss.svg",
+                use_container_width=True,
+            )
+
         # --- IoU Comparison ---
         with st.expander("IoU Comparison"):
             st.markdown(
@@ -705,31 +710,47 @@ def classifier_training_plot_help():
                 """
             )
 
-        # --- Accuracy, Precision, and F1 Scores ---
-        with st.expander("Accuracy, Precision, and F1 Scores"):
-            st.markdown(
-                """
-                These metrics summarize how well the classifier distinguishes between classes:
+            st.image(
+                DIAGRAM_DIR / "train_test_loss.svg",
+                use_container_width=True,
+            )
 
+        # --- Accuracy, Precision, and F1 Scores ---
+        with st.expander("Accuracy, Precision, Recall, and F1 Scores"):
+            st.markdown(
+                r"""
                 ### **Accuracy**
-                - The proportion of all predictions that are correct.
-                - Useful when classes are well-balanced.
-                - Can be misleading for imbalanced datasets.
+                Proportion of all predictions that are correct.  *Interpretation:* Higher accuracy means the model is correct more often overall.  
+                In multiclass settings, accuracy can look high even if some classes perform poorly.
+
+                $$\text{Accuracy} = \frac{TP + TN}{TP + TN + FP + FN}$$
+                
 
                 ### **Precision**
-                - Of all samples predicted as a given class, how many were actually that class.
-                - High precision means **few false positives**.
-                - Important when the cost of a false positive is high.
+                Of predicted positives, how many were correct. *Interpretation:* Higher precision means fewer false positives.  
+                In multiclass results (macro/weighted), it reflects how reliably the model’s positive predictions are correct across all classes.  
+                
+                $$\text{Precision} = \frac{TP}{TP + FP}$$
+                
+
+                ### **Recall**
+                Of actual positives, how many were correctly identified. *Interpretation:* Higher recall means fewer missed cases.  
+                As an overall metric, it summarizes how well the model captures true instances across all classes.
+                
+                $$\text{Recall} = \frac{TP}{TP + FN}$$
+                
 
                 ### **F1 Score**
-                - Harmonic mean of precision and recall.
-                - A balanced measure that is robust to class imbalance.
-                - High F1 indicates strong classification performance.
-
-                Trends to look for:
-                - Increasing accuracy and F1 during training.
-                - A gap between training and test scores may indicate **overfitting**.
+                Harmonic mean of precision and recall. *Interpretation:* Higher F1 means the model maintains a good balance between precision and recall.  
+                Useful in multiclass settings because it is less affected by class imbalance than accuracy alone.  
+                
+                $$F1 = 2 \cdot \frac{P \cdot R}{P + R}$$
                 """
+            )
+
+            st.image(
+                DIAGRAM_DIR / "acc_prec_f1.svg",
+                use_container_width=True,
             )
 
         # --- Confusion Matrix ---
@@ -752,4 +773,9 @@ def classifier_training_plot_help():
 
                 Use this plot to identify which classes require more attention or additional data augmentation.
                 """
+            )
+
+            st.image(
+                DIAGRAM_DIR / "confusion_matrix.svg",
+                use_container_width=True,
             )

@@ -9,6 +9,7 @@ from zipfile import ZipFile
 from pathlib import Path
 from zipfile import ZIP_DEFLATED
 from helpers.classifying_functions import color_hex_for
+from pathlib import Path
 
 
 def hex_for_plot_label(label: str) -> str:
@@ -373,8 +374,6 @@ def build_plots_zip(plot_paths_or_bytes) -> bytes:
                 pass
     return buf.getvalue()
 
-
-from pathlib import Path
 
 # Path to this file
 HERE = Path(__file__).resolve()

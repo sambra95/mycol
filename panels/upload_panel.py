@@ -45,7 +45,7 @@ def render_main():
 
             # allow user to specify mask suffix (default "_masks")
             mask_suffix = st.text_input(
-                "Mask files must match image an name plus this suffix",
+                "Mask file names must match uploaded image an name plus this suffix",
                 value=ss.get("mask_suffix", "_masks"),
                 key="mask_suffix_input",
             )

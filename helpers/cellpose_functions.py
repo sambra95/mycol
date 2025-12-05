@@ -136,17 +136,15 @@ def get_cellpose_model():
     if ss.get("cellpose_model_obj") is not None and ss.get("cellpose_model_tag") == tag:
         return ss["cellpose_model_obj"]
 
-    use_gpu = core.use_gpu()
-
     weights_path = get_cellpose_weights()
     if weights_path:
         model = models.CellposeModel(
-            gpu=use_gpu,
+            gpu=core.use_gpu,
             pretrained_model=weights_path,
         )
     else:
         model = models.CellposeModel(
-            gpu=use_gpu,
+            gpu=core.use_gpu,
             pretrained_model="cyto2",
         )
 
@@ -354,9 +352,8 @@ def plot_pred_vs_true_counts(gt_counts, base_counts, title):
 @st.cache_resource
 def load_base_cellpose_model(base_model: str):
     """Loads a base Cellpose model for fine-tuning."""
-    use_gpu = core.use_gpu()
     init_model = None if base_model == "scratch" else base_model
-    cell_model = models.CellposeModel(gpu=use_gpu, model_type=init_model)
+    cell_model = models.CellposeModel(gpu=core.use_gpu, model_type=init_model)
     return cell_model
 
 

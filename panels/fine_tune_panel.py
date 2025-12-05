@@ -3,7 +3,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-import itertools
 from cellpose import models, metrics, core
 import torch
 import io as IO
@@ -310,7 +309,7 @@ def render_cellpose_options(key_ns="train_cellpose"):
                 )
 
 
-def _get_train_setup():
+def get_train_setup():
     recs = {k: st.session_state["images"][k] for k in ordered_keys()}
     base_model = ss.get("cp_base_model")
     epochs = int(ss.get("cp_max_epoch"))
@@ -321,14 +320,19 @@ def _get_train_setup():
     return recs, base_model, epochs, lr, wd, nimg, channels
 
 
-def _finetune_cellpose(recs, base_model, epochs, lr, wd, nimg, channels):
-    with st.spinner("Fine-tuning Cellpose…"):
+def finetune_cellpose_button_function(
+    recs, base_model, epochs, learning_rate, weight_decay, nimg, channels
+):
+
+    with st.spinner(
+        "Fine-tuning Cellpose. Grab a coffee! Clicking elsewhere within the app now will interrupt training..."
+    ):
         train_losses, test_losses, model_name = finetune_cellpose(
             recs,
             base_model=base_model,
             epochs=epochs,
-            learning_rate=lr,
-            weight_decay=wd,
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
             nimg_per_epoch=nimg,
             channels=channels,
         )
@@ -340,7 +344,8 @@ def _finetune_cellpose(recs, base_model, epochs, lr, wd, nimg, channels):
     return model_name
 
 
-def _prepare_eval_data(recs, max_n=40):
+def prepare_eval_data(recs, max_n=40):
+    """returns a random subset of data on which to perform hyperparameter tuning"""
     masks = [rec["masks"] for rec in recs.values()]
     images = [rec["image"] for rec in recs.values()]
     N = len(images)
@@ -353,25 +358,24 @@ def _prepare_eval_data(recs, max_n=40):
     return images, masks
 
 
-def _set_cp_hparams(src):
+def set_cp_hparams(src):
     ss["cp_cellprob_threshold"] = float(src["cellprob"])
     ss["cp_flow_threshold"] = float(src["flow_threshold"])
     ss["cp_min_size"] = int(src["min_size"])
     ss["cp_niter"] = int(src["niter"])
 
 
-def _run_optuna(images, masks, base_model, channels, model_name):
+def run_optuna(images, masks, base_model, channels, model_name):
     if not ss.get("cp_do_gridsearch"):
         return channels
 
     st.subheader("Hyperparameter tuning (Optuna)")
-    ch1 = int(st.session_state.get("cp_ch1"))
-    ch2 = int(st.session_state.get("cp_ch2"))
+    ch1 = int(st.session_state.get("cp_training_ch1"))
+    ch2 = int(st.session_state.get("cp_training_ch2"))
     channels = [ch1, ch2]
 
-    use_gpu = core.use_gpu()
     eval_model = models.CellposeModel(
-        gpu=use_gpu,
+        gpu=core.use_gpu,
         model_type=base_model if base_model != "scratch" else "cyto2",
     )
     ft_bytes = st.session_state.get("cellpose_model_bytes")
@@ -393,8 +397,8 @@ def _run_optuna(images, masks, base_model, channels, model_name):
             min(i / n_trials, 1.0),
             text=(
                 f"Trial {i}/{n_trials} "
-                f"(cp={cellprob:.3f}, flow={flowthresh:.3f}, "
-                f"niter={niter}, min={min_size})"
+                f"(cell probability threshold = {cellprob:.3f}, flow threshold = {flowthresh:.3f}, "
+                f"niter = {niter}, minimum cell size = {min_size})"
             ),
         )
 
@@ -434,13 +438,11 @@ def _run_optuna(images, masks, base_model, channels, model_name):
     )
     st.session_state["cp_grid_results_df"] = df
 
-    st.success(f"Fine-tuning complete ✅ (model: {model_name})")
-
-    _set_cp_hparams(study.best_trial.params)
+    set_cp_hparams(study.best_trial.params)
 
     if not df.empty and np.isfinite(df["ap_iou_0.5"].iloc[0]):
         best = df.iloc[0]
-        _set_cp_hparams(best)
+        set_cp_hparams(best)
         st.success(
             f"Best hyperparameters set: cellprob={best['cellprob']}, "
             f"flow={best['flow_threshold']}, min_size={int(best['min_size'])}, "
@@ -452,10 +454,13 @@ def _run_optuna(images, masks, base_model, channels, model_name):
     return channels
 
 
-def _validate_and_compare(images, masks, channels):
-    with st.spinner("Validating model…"):
-        use_gpu = core.use_gpu()
-        base_model = models.CellposeModel(gpu=use_gpu, model_type=ss["cp_base_model"])
+def validate_and_compare(images, masks, channels):
+    with st.spinner(
+        "Validating model... Not long to go! Don't click yet, you will interupt training."
+    ):
+        base_model = models.CellposeModel(
+            gpu=core.use_gpu, model_type=ss["cp_base_model"]
+        )
 
         hp = dict(
             diameter=None,
@@ -497,11 +502,13 @@ def render_cellpose_train_fragment():
     if not go:
         return
 
-    recs, base_model, epochs, lr, wd, nimg, channels = _get_train_setup()
-    model_name = _finetune_cellpose(recs, base_model, epochs, lr, wd, nimg, channels)
-    images, masks = _prepare_eval_data(recs)
-    channels = _run_optuna(images, masks, base_model, channels, model_name)
-    _validate_and_compare(images, masks, channels)
+    recs, base_model, epochs, lr, wd, nimg, channels = get_train_setup()
+    model_name = finetune_cellpose_button_function(
+        recs, base_model, epochs, lr, wd, nimg, channels
+    )
+    images, masks = prepare_eval_data(recs)
+    channels = run_optuna(images, masks, base_model, channels, model_name)
+    validate_and_compare(images, masks, channels)
 
 
 def show_cellpose_training_plots():

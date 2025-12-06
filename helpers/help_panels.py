@@ -200,15 +200,28 @@ def shape_metric_help():
         """
         Below is a quick reference for the shape descriptors computed from each labeled region.
         Use this as a guide when interpreting the measurements for your segmented cells.
-
-        **Notation:**  
-        - \(A\): area (number of pixels in the object)  
-        - \(P\): perimeter (length of the object's boundary)  
-        - \(a, b\): semi-major and semi-minor axes of the best-fit ellipse  
-
-        All quantities are reported in pixel units.
         """
     )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown(
+            """
+            **Notation:**  
+            - \(A\): area (number of pixels in the object)  
+            - \(P\): perimeter (length of the object's boundary)  
+            - \(a, b\): semi-major and semi-minor axes of the best-fit ellipse  
+
+            All quantities are reported in pixel units.
+            """
+        )
+
+    with col2:
+        st.image(
+            DIAGRAM_DIR / "plot_download.svg",
+            use_container_width=True,
+        )
 
     # --- Textual definitions -------------------------------------------------
     metrics = [

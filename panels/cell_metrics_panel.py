@@ -5,7 +5,7 @@ from helpers.cell_metrics_functions import (
     build_analysis_df,
     plot_violin,
     plot_bar,
-    build_cell_metrics_zip,
+    build_cell_metrics_csv,
 )
 from helpers.help_panels import shape_metric_help
 
@@ -78,13 +78,13 @@ def render_plotting_options():
     # render the download button for cell metrics
     st.download_button(
         "Download table of cell descriptors",
-        data=build_cell_metrics_zip(
+        data=build_cell_metrics_csv(
             tuple(st.session_state.get("analysis_labels") or ())
         ),
-        file_name="cell_metrics.zip",
-        mime="application/zip",
+        file_name="cell_metrics.csv",
+        mime="text/csv",
         use_container_width=True,
-        key="dl_cell_metrics_zip",
+        key="dl_cell_metrics_csv",
         type="primary",
     )
 

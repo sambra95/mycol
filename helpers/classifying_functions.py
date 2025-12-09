@@ -285,12 +285,12 @@ def densenet_help(has_model, needs_mapping):
 @st.fragment
 def classify_actions_fragment():
 
+    needs_mapping = all(
+        label == "No label" for label in st.session_state["densenet_class_map"].values()
+    )
+
     # Show warning if a classifier is loaded but all labels are "No label"
     if not st.session_state["densenet_model"] == None:
-        needs_mapping = all(
-            label == "No label"
-            for label in st.session_state["densenet_class_map"].values()
-        )
 
         if needs_mapping:
             st.toast(

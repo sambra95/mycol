@@ -16,6 +16,7 @@ from helpers.state_ops import ordered_keys, get_current_rec
 from pathlib import Path
 import plotly.io as pio
 import plotly.graph_objects as go
+import subprocess
 
 # -----------------------------------------------------#
 # ---------------- IMAGE PREPROCESSING --------------- #
@@ -248,6 +249,73 @@ def segment_with_cellpose_sam(
     rec["labels"] = {
         int(i): None for i in np.unique(rec["masks"]) if i != 0
     }  # reset/realign
+
+    return rec
+
+
+HERE = Path(__file__).resolve().parent
+
+# worker is one level above helpers/
+WORKER_SCRIPT = str((HERE.parent / "segment_with_cellpose_sam_worker.py").resolve())
+
+# your cellpose4 python (this is what you already used)
+CELLPOSE4_PYTHON = "/Users/sambra/miniforge3/envs/cellpose4/bin/python"
+
+
+def segment_with_cellpose_sam_v4_bridge(
+    rec: dict,
+    *,
+    channels=(0, 0),
+    diameter=None,
+    cellprob_threshold=-0.2,
+    flow_threshold=0.4,
+    min_size=0,
+    niter=0,
+    use_gpu=True,
+) -> dict:
+    """Call Cellpose-SAM (v4) from fungal_app_env via a worker in cellpose4 env."""
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        in_path = Path(tmpdir) / "input.npz"
+        out_path = Path(tmpdir) / "output.npz"
+
+        kwargs = dict(
+            channels=channels,
+            diameter=diameter,
+            cellprob_threshold=cellprob_threshold,
+            flow_threshold=flow_threshold,
+            min_size=min_size,
+            niter=niter,
+            use_gpu=use_gpu,
+        )
+
+        # Save input record + parameters for the worker
+        np.savez_compressed(in_path, rec=rec, kwargs=kwargs)
+
+        cmd = [CELLPOSE4_PYTHON, WORKER_SCRIPT, str(in_path), str(out_path)]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                "Cellpose-SAM worker failed\n"
+                f"  return code: {result.returncode}\n"
+                f"  command: {result.args}\n\n"
+                f"--- STDOUT ---\n{result.stdout}\n"
+                f"--- STDERR ---\n{result.stderr}\n"
+            )
+
+        # Load updated record from worker *before* the temp dir is deleted
+        out = np.load(out_path, allow_pickle=True)
+        rec_out = out["rec"].item()
+
+        # mutate the original rec in-place so existing code still works
+        rec.clear()
+        rec.update(rec_out)
 
     return rec
 
@@ -596,7 +664,7 @@ def segment_current_and_refresh_cellpose_sam():
     rec = get_current_rec()
     if rec is not None:
         params = get_cellpose_hparams_from_state()
-        segment_with_cellpose_sam(rec, **params)
+        segment_with_cellpose_sam_v4_bridge(rec, **params)
         st.session_state["edit_canvas_nonce"] += 1
     st.rerun()
 
@@ -608,7 +676,7 @@ def batch_segment_current_and_refresh_cellpose_sam():
     params = get_cellpose_hparams_from_state()
     pb = st.progress(0.0, text="Starting…")
     for i, k in enumerate(ok, 1):
-        segment_with_cellpose_sam(st.session_state.images.get(k), **params)
+        segment_with_cellpose_sam_v4_bridge(st.session_state.images.get(k), **params)
         pb.progress(i / n, text=f"Segmented {i}/{n}")
 
 

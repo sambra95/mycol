@@ -2,7 +2,7 @@
 import os
 import streamlit as st
 
-st.set_page_config(page_title="Mycoscope", page_icon="🧬", layout="wide")
+st.set_page_config(page_title="Mycol", page_icon="🧬", layout="wide")
 
 # ------------------ Boot steps ------------------ #
 from boot import configure_tf_cpu_only
@@ -44,7 +44,7 @@ st.html(
 pages = [
     st.Page(
         "views/1_home_page.py",
-        title="Welcome to Mycoscope",
+        title="Welcome to Mycol",
         icon="🏠",
         default=True,
     ),

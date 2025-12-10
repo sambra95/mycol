@@ -76,7 +76,7 @@ with col1:
                 )
 
         # --- Toggles for overlay and normalization ---
-        inner_col1, inner_col2, inner_col3 = st.columns([1, 1, 1])
+        inner_col1, inner_col2, inner_col3 = st.columns([4, 5, 4])
         with inner_col1:
             # toggle to show/hide masks overlay
             show_overlay_toggle = st.toggle(
@@ -99,7 +99,7 @@ with col1:
             show_image_toggle = st.toggle(
                 "Image",
                 key="show_image_w",
-                value=st.session_state.get("show_image_w", True),
+                value=st.session_state.get("show_image", True),
             )
             st.session_state["show_image"] = show_image_toggle
 

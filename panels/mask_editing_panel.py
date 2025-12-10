@@ -39,22 +39,18 @@ def render_segment_sidebar(*, key_ns: str = "side"):
             type="primary",
         ):
 
-            st.caption(
-                "Select a model and generate masks for this image or all images."
-            )
-
             model_family = st.selectbox(
                 "Select model", ["Cellpose4", "Fine-tuned Model"]
             )
 
-            col1, col2 = st.columns([1, 1])
+            col1, col2 = st.columns(2)
 
             if model_family == "Cellpose4":
 
                 with col1:
 
                     if st.button(
-                        "Generate Masks",
+                        "Generate",
                         use_container_width=True,
                         key="segment_image_SAM",
                     ):
@@ -62,7 +58,7 @@ def render_segment_sidebar(*, key_ns: str = "side"):
 
                 with col2:
                     if st.button(
-                        "Batch Generate Masks",
+                        "Batch generate",
                         use_container_width=True,
                         key="batch_segment_image_sam",
                         help="Segment all uploaded images with Cellpose.",
@@ -74,7 +70,7 @@ def render_segment_sidebar(*, key_ns: str = "side"):
                 with col1:
 
                     if st.button(
-                        "Generate masks",
+                        "Generate",
                         use_container_width=True,
                         key="segment_image",
                         help="Segment this image with Cellpose.",
@@ -83,7 +79,7 @@ def render_segment_sidebar(*, key_ns: str = "side"):
                         segment_current_and_refresh()
                 with col2:
                     if st.button(
-                        "Batch generate masks",
+                        "Batch generate",
                         use_container_width=True,
                         key="batch_segment_image",
                         help="Segment all uploaded images with Cellpose.",
@@ -91,7 +87,7 @@ def render_segment_sidebar(*, key_ns: str = "side"):
                     ):
                         batch_segment_and_refresh()
 
-            st.caption("Change parameters to to reduce errors:")
+            st.caption("Change hyperparameters to increase accuracy:")
 
             with st.expander(
                 "Cellpose hyperparameters",

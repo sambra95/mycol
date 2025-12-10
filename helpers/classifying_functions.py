@@ -222,7 +222,7 @@ def create_row(name: str, key: str, mode_ns: str = "side"):
     Create a single class selection row with color chip, name, count, and buttons.
     """
     # icon | name | click-assign | assign-all |
-    c1, c2, c3, c4 = st.columns([1, 5, 2, 4])
+    c1, c2, c3, c4 = st.columns([1, 5, 3, 3])
     c1.markdown(color_chip_md(color_hex_for(name)), unsafe_allow_html=True)
     c2.write(f"**{name}**")
 
@@ -307,7 +307,7 @@ def classify_actions_fragment():
         help = densenet_help(st.session_state["densenet_model"] == None, needs_mapping)
         # classify masks in the current image
         if st.button(
-            "Classify cells",
+            "Classify",
             use_container_width=True,
             help=help,
             disabled=(st.session_state["densenet_model"] == None) or needs_mapping,
@@ -317,7 +317,7 @@ def classify_actions_fragment():
     with col2:
         # batch classify masks in all images
         if st.button(
-            "Batch classify cells",
+            "Batch classify",
             key="btn_batch_classify_cellpose",
             use_container_width=True,
             help=help,

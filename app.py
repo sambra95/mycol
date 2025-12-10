@@ -56,12 +56,12 @@ pages = [
     st.Page(
         "views/3_Create_and_Edit_Masks.py",
         title="Annotate Images",
-        icon="🎭",
+        icon="✏️",
     ),
     st.Page(
         "views/4_Fine_Tune_Models.py",
         title="Train Models",
-        icon="🧠",
+        icon="⚙️",
     ),
     st.Page(
         "views/5_Cell_Metrics.py",

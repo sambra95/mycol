@@ -442,9 +442,8 @@ def assign_clicked():
 @st.fragment
 def render_cellpose_hyperparameters_fragment():
     """Render Cellpose hyperparameters editing fragment."""
-    col1, col2 = st.columns(2)
     # Channel 1
-    col1.number_input(
+    st.number_input(
         "Channel 1",
         value=st.session_state.get("cp_ch1"),
         step=1,
@@ -454,7 +453,7 @@ def render_cellpose_hyperparameters_fragment():
     st.session_state["cp_ch1"] = st.session_state.get("w_cp_ch1")
 
     # Channel 2
-    col2.number_input(
+    st.number_input(
         "Channel 2",
         value=st.session_state.get("cp_ch2"),
         step=1,

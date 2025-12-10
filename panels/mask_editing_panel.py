@@ -33,7 +33,7 @@ def render_segment_sidebar(*, key_ns: str = "side"):
 
         # render cellpose controls
         with st.popover(
-            "Segment cells with Cellpose",
+            "Predict masks for image",
             use_container_width=True,
             help="Segment cells using the loaded Cellpose model.",
             type="primary",
@@ -96,7 +96,7 @@ def render_segment_sidebar(*, key_ns: str = "side"):
 
         # render SAM2 controls
         with st.popover(
-            "Segment cells with SAM2",
+            "Predict masks from boxes",
             use_container_width=True,
             help="Draw boxes and click segment to use SAM2 to segment individual cells.",
             type="primary",

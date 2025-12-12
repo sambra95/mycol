@@ -1,4 +1,4 @@
-name: cellpose4
+name: mycol
 channels:
   - conda-forge
   - defaults

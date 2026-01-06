@@ -1,10 +1,9 @@
-# segment_with_cellpose_sam_worker.py
 import sys
 import traceback
 import numpy as np
 
-# adjust this import to match where your function lives
-from helpers.cellpose_functions import segment_with_cellpose_sam
+
+from src.helpers.cellpose_functions import segment_with_cellpose_sam
 
 
 def main():
@@ -27,7 +26,6 @@ def main():
         np.savez_compressed(out_path, rec=rec_out)
 
     except Exception:
-        # print full traceback so we see it from the parent process
         traceback.print_exc()
         sys.exit(2)
 

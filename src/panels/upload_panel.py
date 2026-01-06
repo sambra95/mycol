@@ -1,8 +1,8 @@
 import streamlit as st
-from helpers.state_ops import (
+from src.helpers.state_ops import (
     ordered_keys,
 )
-from helpers.upload_download_functions import (
+from src.helpers.upload_download_functions import (
     process_uploads,
     render_images_form,
     load_demo_data,
@@ -107,7 +107,7 @@ def render_main():
                         f.write(data)
 
                 import torch
-                from helpers.densenet_functions import build_densenet
+                from src.helpers.densenet_functions import build_densenet
                 
                 try:
                     state_dict = torch.load(path, map_location="cpu")

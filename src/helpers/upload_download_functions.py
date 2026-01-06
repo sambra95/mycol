@@ -13,19 +13,19 @@ from PIL import UnidentifiedImageError
 import os
 import tempfile
 import hashlib
-from helpers.classifying_functions import classes_map_from_labels, create_colour_palette
-from helpers.mask_editing_functions import create_image_mask_overlay
-from helpers.densenet_functions import resize_with_aspect_ratio
+from src.helpers.classifying_functions import classes_map_from_labels, create_colour_palette
+from src.helpers.mask_editing_functions import create_image_mask_overlay
+from src.helpers.densenet_functions import resize_with_aspect_ratio
 
 
-from helpers.state_ops import (
+from src.helpers.state_ops import (
     ordered_keys,
     stem,
     set_current_by_index,
     reset_global_state,
 )
 
-from helpers.cellpose_functions import normalize_image
+from src.helpers.cellpose_functions import normalize_image
 
 ss = st.session_state
 
@@ -125,7 +125,7 @@ def load_demo_data():
     densenet_path = demo_root / "densenet_demo.pth"
     if densenet_path.exists():
         import torch
-        from helpers.densenet_functions import build_densenet
+        from src.helpers.densenet_functions import build_densenet
 
         try:
             state_dict = torch.load(densenet_path, map_location="cpu")

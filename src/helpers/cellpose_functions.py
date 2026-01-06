@@ -12,7 +12,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_absolute_error
 import zipfile
 import pandas as pd
-from helpers.state_ops import ordered_keys, get_current_rec
+from src.helpers.state_ops import ordered_keys, get_current_rec
 from pathlib import Path
 import plotly.io as pio
 import plotly.graph_objects as go
@@ -23,7 +23,7 @@ import subprocess
 # -----------------------------------------------------#
 
 
-# --- small helper: normalization similar to your earlier pipeline ---
+
 def normalize_image(image: np.ndarray) -> np.ndarray:
     """
     Normalizes image intensities for Cellpose input.
@@ -138,16 +138,25 @@ def get_cellpose_model():
         return ss["cellpose_model_obj"]
 
     weights_path = get_cellpose_weights()
+    model_type = "cyto2"
     if weights_path:
+        model_type = weights_path
+
+    try:
         model = models.CellposeModel(
             gpu=core.use_gpu,
-            pretrained_model=weights_path,
+            pretrained_model=model_type,
         )
-    else:
-        model = models.CellposeModel(
-            gpu=core.use_gpu,
-            pretrained_model="cyto2",
-        )
+    except Exception as e:
+        #TODO: lowkey digusting
+        #fallback to CP3 Proxy if CP4 rejects the model (compatibility error)
+        if "CP4" in str(e) or "CP3" in str(e):
+            model = CellposeModel3Proxy(
+                pretrained_model=model_type,
+                gpu=core.use_gpu
+            )
+        else:
+            raise e
 
     ss["cellpose_model_obj"] = model
     ss["cellpose_model_tag"] = tag
@@ -255,11 +264,68 @@ def segment_with_cellpose_sam(
 
 HERE = Path(__file__).resolve().parent
 
-# worker is one level above helpers/
+#worker is in src/
 WORKER_SCRIPT = str((HERE.parent / "segment_with_cellpose_sam_worker.py").resolve())
 
-# your cellpose4 python (this is what you already used)
-CELLPOSE4_PYTHON = "/Users/sambra/miniforge3/envs/cellpose4/bin/python"
+#training workspace
+TRAINING_PROJECT = str((HERE.parent / "training").resolve())
+TRAINING_WORKER_SCRIPT = str((HERE.parent / "training" / "finetune_worker.py").resolve())
+
+
+class CellposeModel3Proxy:
+    """A proxy class that runs Cellpose 3 inference via background worker"""
+    def __init__(self, pretrained_model, gpu=True):
+        self.pretrained_model = pretrained_model
+        self.gpu = gpu
+        #PC4-style attributes for compatibility
+        self.device = torch.device("cuda" if gpu and torch.cuda.is_available() else "cpu")
+        self.net = type('obj', (object,), {'device': self.device})()
+
+    def eval(self, x, channels=None, diameter=None, cellprob_threshold=0.0,
+             flow_threshold=0.4, min_size=15, niter=200, **kwargs):
+        """Runs evaluation using the CP3 worker bridge."""
+        #handle multiple images (list) vs single image
+        is_list = isinstance(x, (list, tuple))
+        images = x if is_list else [x]
+        
+        results = []
+        for img in images:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                in_path = Path(tmpdir) / "input.npz"
+                out_path = Path(tmpdir) / "output.npz"
+                
+                #save input
+                np.savez_compressed(
+                    in_path,
+                    image=np.ascontiguousarray(img),
+                    weights_path=self.pretrained_model,
+                    channels=np.array(channels if channels is not None else [0, 0]),
+                    diameter=diameter if diameter is not None else 0.0,
+                    cellprob_threshold=cellprob_threshold,
+                    flow_threshold=flow_threshold,
+                    min_size=min_size,
+                    niter=niter
+                )
+                
+                #run worker
+                cmd = [
+                    "uv", "run",
+                    "--project", TRAINING_PROJECT,
+                    "python", INFERENCE_WORKER_SCRIPT,
+                    str(in_path), str(out_path)
+                ]
+                
+                res = subprocess.run(cmd, capture_output=True, text=True)
+                if res.returncode != 0:
+                    raise RuntimeError(f"Cellpose 3 Inference Bridge failed:\n{res.stderr}")
+
+                    
+                # Load results
+                with np.load(out_path, allow_pickle=True) as data:
+                    results.append(data["masks"])
+                    
+        return (results, None, None) if is_list else (results[0], None, None)
+
 
 
 def segment_with_cellpose_sam_v4_bridge(
@@ -292,7 +358,7 @@ def segment_with_cellpose_sam_v4_bridge(
         # Save input record + parameters for the worker
         np.savez_compressed(in_path, rec=rec, kwargs=kwargs)
 
-        cmd = [CELLPOSE4_PYTHON, WORKER_SCRIPT, str(in_path), str(out_path)]
+        cmd = [sys.executable, WORKER_SCRIPT, str(in_path), str(out_path)]
 
         result = subprocess.run(
             cmd,
@@ -492,50 +558,71 @@ def finetune_cellpose(
     nimg_per_epoch=32,
     channels=[0, 0],
 ):
-    """Fine-tunes Cellpose on the given records and returns training losses, test losses, and model name."""
+    """Fine-tunes Cellpose on the given records using a v3 worker bridge."""
 
     images, masks = [], []
     for k in recs.keys():
         images.append(preprocess_for_cellpose(recs[k]))
         masks.append(recs[k]["masks"].astype("uint16"))
 
-    train_images, test_images, train_masks, test_masks = train_test_split(
-        images, masks, test_size=0.2, random_state=42, shuffle=True
-    )
-
     st.info(
-        f"Training on **{len(train_images)} images** "
-        f"(+ {len(test_images)} validation images)."
+        f"Training on **{len(images)} images** using Cellpose 3 bridge..."
     )
 
-    _ = io.logger_setup()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        in_path = Path(tmpdir) / "input.npz"
+        out_path = Path(tmpdir) / "output.npz"
 
-    init_model = None if base_model == "scratch" else base_model
-    cell_model = load_base_cellpose_model(init_model)
-    model_name = f"{base_model}_finetuned.pt"
+        # Save input data for the worker
+        # Using a list of arrays can be problematic with object dtype if shapes vary.
+        # We'll ensures they are arrays and save them.
+        np.savez_compressed(
+            in_path,
+            images=np.array([np.ascontiguousarray(im) for im in images], dtype=object),
+            masks=np.array([np.ascontiguousarray(ma).astype(np.uint16) for ma in masks], dtype=object),
+            base_model=base_model,
+            epochs=epochs,
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+            nimg_per_epoch=nimg_per_epoch,
+            channels=np.array(channels),
+        )
 
-    new_path, train_losses, test_losses = train.train_seg(
-        cell_model.net,
-        train_data=train_images,
-        train_labels=train_masks,
-        test_data=test_images,
-        test_labels=test_masks,
-        channels=channels,
-        n_epochs=epochs,
-        learning_rate=learning_rate,
-        weight_decay=weight_decay,
-        SGD=True,
-        nimg_per_epoch=nimg_per_epoch,
-        model_name=model_name,
-        save_path=None,
-    )
+        # Run worker via uv run --project src/training
+        # This will automatically handle the Cellpose 3 installation/env
+        cmd = [
+            "uv", "run",
+            "--project", TRAINING_PROJECT,
+            "python", TRAINING_WORKER_SCRIPT,
+            str(in_path), str(out_path)
+        ]
 
-    # stash in session
-    buf = IO.BytesIO()
-    torch.save(cell_model.net.state_dict(), buf)
-    st.session_state["cellpose_model_bytes"] = buf.getvalue()
-    st.session_state["cellpose_model_name"] = model_name
-    st.session_state["model_to_fine_tune"] = base_model
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            st.error("Cellpose 3 Training Bridge failed.")
+            with st.expander("Show Error Details"):
+                st.code(f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}")
+            st.stop()
+
+        # Load results
+        with np.load(out_path, allow_pickle=True) as data:
+            train_losses = np.array(data["train_losses"])
+            test_losses = np.array(data["test_losses"])
+            model_name = str(data["model_name"])
+            state_dict = data["state_dict"].item()
+
+
+        # stash in session
+        buf = IO.BytesIO()
+        torch.save(state_dict, buf)
+        st.session_state["cellpose_model_bytes"] = buf.getvalue()
+        st.session_state["cellpose_model_name"] = model_name
+        st.session_state["model_to_fine_tune"] = base_model
 
     return train_losses, test_losses, model_name
 

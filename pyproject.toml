@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "streamlit==1.51.0",
-    "cellpose>=3.1",
+    "cellpose>=4.0.0",
     "torch>=2.5.1",
     "torchvision>=0.20.1",
     "opencv-python-headless",  # Lighter than opencv-python
@@ -24,6 +24,16 @@ dependencies = [
     "huggingface_hub==1.1.2",
     "kaleido",
 ]
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cuda" }
+torchvision = { index = "pytorch-cuda" }
+
 
 [dependency-groups]
 dev = [

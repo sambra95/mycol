@@ -2,10 +2,10 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from helpers.state_ops import ordered_keys
+from src.helpers.state_ops import ordered_keys
 from skimage.measure import regionprops
 from pathlib import Path
-from helpers.classifying_functions import color_hex_for
+from src.helpers.classifying_functions import color_hex_for
 
 
 def hex_for_plot_label(label: str) -> str:

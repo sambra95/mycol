@@ -8,15 +8,15 @@ import torch
 import io as IO
 import optuna
 
-from helpers.state_ops import ordered_keys
-from helpers.densenet_functions import (
+from src.helpers.state_ops import ordered_keys
+from src.helpers.densenet_functions import (
     load_labeled_patches,
     finetune_densenet,
     evaluate_fine_tuned_densenet,
     plot_loss_curve,
     build_densenet_zip_bytes,
 )
-from helpers.cellpose_functions import (
+from src.helpers.cellpose_functions import (
     finetune_cellpose,
     compute_prediction_ious,
     plot_iou_comparison,
@@ -24,7 +24,7 @@ from helpers.cellpose_functions import (
     get_cellpose_model,
     build_cellpose_zip_bytes,
 )
-from helpers.help_panels import (
+from src.helpers.help_panels import (
     classifier_training_plot_help,
     cellpose_training_plot_help,
 )

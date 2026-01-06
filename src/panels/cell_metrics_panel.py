@@ -1,13 +1,13 @@
 # panels/cell_metrics_panel.py
 import streamlit as st
 
-from helpers.cell_metrics_functions import (
+from src.helpers.cell_metrics_functions import (
     build_analysis_df,
     plot_violin,
     plot_bar,
     build_cell_metrics_csv,
 )
-from helpers.help_panels import shape_metric_help
+from src.helpers.help_panels import shape_metric_help
 
 
 @st.fragment

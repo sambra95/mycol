@@ -25,8 +25,8 @@ from sklearn.metrics import (
 )
 
 # ---- bring in existing app helpers ----
-from helpers.state_ops import ordered_keys
-from helpers.cellpose_functions import normalize_image, add_plotly_as_png_to_zip
+from src.helpers.state_ops import ordered_keys
+from src.helpers.cellpose_functions import normalize_image, add_plotly_as_png_to_zip
 
 ss = st.session_state
 
@@ -281,11 +281,6 @@ def build_densenet(num_classes=2):
         
     in_features = model.classifier.in_features
     
-    model.classifier = nn.Sequential(
-        nn.Linear(in_features, 128),
-        nn.ReLU(),
-        nn.RNN(num_classes) if False else nn.Linear(128, num_classes) # Fix typo
-    )
     model.classifier = nn.Sequential(
         nn.Linear(in_features, 128),
         nn.ReLU(),

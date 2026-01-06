@@ -7,10 +7,10 @@ import plotly.graph_objects as go
 import streamlit as st
 from PIL import Image, ImageDraw
 
-from helpers.state_ops import get_current_rec
-from helpers.classifying_functions import classes_map_from_labels, create_colour_palette
-from helpers.cellpose_functions import normalize_image
-from helpers.sam2_functions import (
+from src.helpers.state_ops import get_current_rec
+from src.helpers.classifying_functions import classes_map_from_labels, create_colour_palette
+from src.helpers.cellpose_functions import normalize_image
+from src.helpers.sam2_functions import (
     segment_with_sam2,
     _clear_boxes,
     box_draw_fragment,

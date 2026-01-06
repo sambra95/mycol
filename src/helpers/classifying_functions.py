@@ -2,8 +2,8 @@
 import numpy as np
 import streamlit as st
 
-from helpers.state_ops import ordered_keys, get_current_rec
-from helpers.densenet_functions import (
+from src.helpers.state_ops import ordered_keys, get_current_rec
+from src.helpers.densenet_functions import (
     classify_cells_with_densenet,
     densenet_mapping_fragment,
 )

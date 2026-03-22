@@ -4,15 +4,6 @@ import streamlit as st
 
 st.set_page_config(page_title="Mycol", page_icon="👨🏼‍🔬", layout="wide")
 
-# Eager load heavy libraries to prevent lag on tab switching
-with st.empty():
-    st.write("### ⏳ Initializing AI Models...")
-    st.caption("Pre-loading PyTorch, Cellpose, and SAM2 for smoother performance.")
-    from src.helpers.preload import eager_load_heavy_libs
-
-    eager_load_heavy_libs()
-
-
 # ------------------ Boot steps ------------------ #
 from src.boot import configure_tf_cpu_only
 from src.helpers.state_ops import ensure_global_state

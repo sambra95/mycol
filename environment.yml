@@ -1,0 +1,27 @@
+name: mycol
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pytorch::pytorch
+  - pytorch::torchvision
+  - pytorch::cpuonly
+  - pip
+  - pip:
+    - streamlit==1.52.2
+    - cellpose>=3.0,<4.0
+    - opencv-python-headless
+    - scikit-learn==1.5.2
+    - scikit-image==0.25.2
+    - pandas==2.3.2
+    - numpy>=1.26.4
+    - scipy==1.15.3
+    - pillow==10.4.0
+    - plotly==6.3.1
+    - streamlit-image-coordinates==0.4.0
+    - tifffile==2024.9.20
+    - sam2==1.1.0
+    - huggingface_hub==1.1.2
+    - kaleido

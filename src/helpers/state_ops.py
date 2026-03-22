@@ -1,8 +1,6 @@
 from pathlib import Path
 import streamlit as st
 import numpy as np
-import plotly.io as pio
-import plotly.graph_objects as go
 
 
 def ensure_global_state() -> None:
@@ -31,15 +29,7 @@ def ensure_global_state() -> None:
     st.session_state.setdefault("last_remove_xy", None)
     ss.setdefault("disp_w", 0)
 
-    # cellpose model training defaults
-    ss.setdefault("cyto_to_train", "Cyto3")
-    ss.setdefault("train_losses", [])
-    ss.setdefault("test_losses", [])
-    ss.setdefault("cp_training_ch1", 0)
-    ss.setdefault("cp_training_ch2", 0)
-
     # cellpose inference
-    # ss.setdefault("cellpose_channels", [0, 0])
     ss.setdefault("cp_ch1", 0)
     ss.setdefault("cp_ch2", 0)
     ss.setdefault("cp_min_size", 0)
@@ -47,13 +37,6 @@ def ensure_global_state() -> None:
     ss.setdefault("cp_flow_threshold", 0.3)
     ss.setdefault("cp_cellprob_threshold", 0.2)
     ss.setdefault("cp_diameter", 0)
-
-    # densenet training
-    ss.setdefault("densenet_ckpt_bytes", None)
-    ss.setdefault("dn_input_size", 64)
-    ss.setdefault("dn_batch_size", 32)
-    ss.setdefault("dn_max_epoch", 100)
-    ss.setdefault("dn_val_split", 0.2)
 
     # densenet
     ss.setdefault("densenet_model", None)
@@ -71,7 +54,6 @@ def ensure_global_state() -> None:
     # class defaults
     ss.setdefault("all_classes", ["No label"])
     ss.setdefault("side_current_class", ss["all_classes"][0])
-    ss.setdefault("cp_grid_results_df", None)
     ss.setdefault("densenet_class_map", {})  # {pred_class_idx:int -> app_label:str}
 
 
@@ -102,13 +84,6 @@ def reset_global_state() -> None:
     ss["last_remove_xy"] = None
     ss["disp_w"] = 0
 
-    # --- Cellpose model training defaults ---
-    ss["cyto_to_train"] = "Cyto3"
-    ss["train_losses"] = []
-    ss["test_losses"] = []
-    ss["cp_training_ch1"] = 0
-    ss["cp_training_ch2"] = 0
-
     # --- Cellpose inference defaults ---
     ss["cp_ch1"] = 0
     ss["cp_ch2"] = 0
@@ -117,12 +92,6 @@ def reset_global_state() -> None:
     ss["cp_flow_threshold"] = 0.0
     ss["cp_cellprob_threshold"] = 0.0
     ss["cp_diameter"] = 0
-
-    # --- DenseNet training defaults ---
-    ss["dn_input_size"] = 64
-    ss["dn_batch_size"] = 32
-    ss["dn_max_epoch"] = 100
-    ss["dn_val_split"] = 0.2
 
     # --- DenseNet model ---
     ss["densenet_model"] = None
@@ -140,7 +109,6 @@ def reset_global_state() -> None:
     # --- class defaults ---
     ss["all_classes"] = ["No label"]
     ss["side_current_class"] = ss["all_classes"][0]
-    ss["cp_grid_results_df"] = None
 
 
 def stem(p: str) -> str:
@@ -184,49 +152,3 @@ def normalize_image(image: np.ndarray) -> np.ndarray:
     # ensure valid uint8 range
     im = np.clip(im, 0, 255)
     return im.astype(np.uint8)
-
-
-def add_plotly_as_png_to_zip(fig_key, zip_file, out_path, default_w=900, default_h=400):
-    """Adds a plotly figure stored in st.session_state[fig_key] as a PNG to the given zip file."""
-    fig = st.session_state[fig_key]
-    png = pio.to_image(
-        fig,
-        format="png",
-        scale=3,
-        width=int(getattr(fig.layout, "width", default_w) or default_w),
-        height=int(getattr(fig.layout, "height", default_h) or default_h),
-    )
-    zip_file.writestr(out_path, png)
-
-
-def plot_loss_curve(train_losses, test_losses):
-    epochs = list(range(1, len(train_losses) + 1))
-    fig = go.Figure()
-    fig.add_scatter(
-        x=epochs,
-        y=train_losses,
-        mode="lines+markers",
-        name="train",
-        line=dict(color="#D3E4F4", width=2),
-        marker=dict(color="#D3E4F4", size=6),
-    )
-
-    e_val = list(range(1, len(test_losses) + 1))
-    fig.add_scatter(
-        x=e_val,
-        y=test_losses,
-        mode="lines+markers",
-        name="val",
-        line=dict(color="#004280", width=2),
-        marker=dict(color="#004280", size=6),
-    )
-    fig.update_layout(
-        title="Training vs. Validation Loss",
-        xaxis_title="Epoch",
-        yaxis_title="Loss",
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-        height=400,
-        width=450,
-    )
-    return fig

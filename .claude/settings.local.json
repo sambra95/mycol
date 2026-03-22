@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /Users/sambra/Documents/GitHub/mycol/src/helpers/*.py /Users/sambra/Documents/GitHub/mycol/src/panels/*.py /Users/sambra/Documents/GitHub/mycol/src/views/*.py)",
+      "Bash(find /Users/sambra/Documents/GitHub/mycol/src -name \"__pycache__\" -exec rm -rf {} +)"
+    ]
+  }
+}

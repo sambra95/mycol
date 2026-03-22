@@ -95,8 +95,6 @@ def render_main():
             if st.button("Clear Cellpose model", width="stretch"):
                 ss["cellpose_model_bytes"] = None
                 ss["cellpose_model_name"] = None
-                ss["train_losses"] = []
-                ss["test_losses"] = []
 
     with col3:
         # ---- DenseNet-121 classifier ----

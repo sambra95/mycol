@@ -65,10 +65,6 @@ pages = [
         title="Annotate Images",
     ),
     st.Page(
-        "src/views/4-fine-tune-models.py",
-        title="Train Models",
-    ),
-    st.Page(
         "src/views/5-cell-metrics.py",
         title="Visualize Cell Attributes",
     ),

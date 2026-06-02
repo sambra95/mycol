@@ -1,3 +1,6 @@
+# **THIS REPO WAS ARCHIVED 02/06/2026. VISIT https://github.com/biosustain/mycol TO ACCESS THE MAINTAINED VERSION OF MYCOL.** 
+
+
 # **Mycol**
 
 _A lightweight, human-in-the-loop microscopy image analysis app._
